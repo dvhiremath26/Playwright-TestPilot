@@ -1,0 +1,38 @@
+{
+  "name": "tcoe-testpilot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TCOE TestPilot - local-first agentic AI test automation agent for Playwright TypeScript + SAP S/4HANA",
+  "license": "ISC",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "vitest run tests/e2e",
+    "check": "npm run typecheck && npm run test",
+    "check:conformance": "node --experimental-strip-types packages/cli/src/conformance.ts",
+    "build:extension": "node apps/vscode-extension/scripts/build.mjs",
+    "package:vsix": "node apps/vscode-extension/scripts/build.mjs --vsix",
+    "cli": "node --experimental-strip-types packages/cli/bin/testpilot.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0"
+  }
+}

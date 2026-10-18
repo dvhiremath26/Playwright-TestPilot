@@ -1,0 +1,49 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "types": ["node"],
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+
+    // The CLI is run with `node --experimental-strip-types`, which requires
+    // explicit .ts extensions on relative imports.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@tcoe/shared-types": ["packages/shared-types/src/index.ts"],
+      "@tcoe/repo-intelligence": ["packages/repo-intelligence/src/index.ts"],
+      "@tcoe/adapters": ["packages/adapters/src/index.ts"],
+      "@tcoe/provider-abstraction": ["packages/provider-abstraction/src/index.ts"],
+      "@tcoe/browser-tools": ["packages/browser-tools/src/index.ts"],
+      "@tcoe/cli/*": ["packages/cli/src/*.ts"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/bin/**/*.ts",
+    "packages/*/tests/**/*.ts",
+    "apps/vscode-extension/src/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "fixtures/**",
+    "**/*.d.ts.snap"
+  ]
+}

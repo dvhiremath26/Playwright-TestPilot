@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.log
+
+# Derived agent state: framework index, task records, checkpoints.
+# Safe to delete — the next run rebuilds the index.
+.tcoe-testpilot/

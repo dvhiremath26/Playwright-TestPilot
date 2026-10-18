@@ -1,0 +1,18 @@
+{
+  "name": "@tcoe/provider-abstraction",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Provider abstraction and prompt templates for TCOE TestPilot.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@tcoe/shared-types": "*"
+  }
+}

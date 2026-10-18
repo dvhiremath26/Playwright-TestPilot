@@ -1,0 +1,171 @@
+{
+  "name": "tcoe-testpilot",
+  "displayName": "TCOE TestPilot",
+  "description": "Turn manual UI test cases into framework-conformant Playwright tests for any web application. Uses GitHub Copilot via VS Code; runs everything locally.",
+  "version": "0.1.39",
+  "publisher": "tcoe",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tcoe/tcoe-testpilot"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Testing",
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "playwright",
+    "testing",
+    "automation",
+    "ui automation",
+    "test generation",
+    "copilot"
+  ],
+  "activationEvents": [
+    "onCommand:tcoeTestPilot.plan",
+    "onCommand:tcoeTestPilot.generate",
+    "onCommand:tcoeTestPilot.selectFile",
+    "onCommand:tcoeTestPilot.open",
+    "onCommand:tcoeTestPilot.apply",
+    "onCommand:tcoeTestPilot.history",
+    "onCommand:tcoeTestPilot.clearHistory",
+    "onCommand:tcoeTestPilot.rebuildIndex",
+    "onCommand:tcoeTestPilot.repair"
+  ],
+  "main": "./out/main.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "tcoeTestPilot.open",
+        "title": "TestPilot: Open Workspace",
+        "icon": "$(search)"
+      },
+      {
+        "command": "tcoeTestPilot.plan",
+        "title": "TestPilot: Plan Test",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "tcoeTestPilot.generate",
+        "title": "TestPilot: Generate Proposal",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "tcoeTestPilot.selectFile",
+        "title": "TestPilot: Use Open Test Case File",
+        "icon": "$(file)"
+      },
+      {
+        "command": "tcoeTestPilot.apply",
+        "title": "TestPilot: Apply Approved Test",
+        "icon": "$(check)"
+      },
+      {
+        "command": "tcoeTestPilot.showDiff",
+        "title": "TestPilot: Review File"
+      },
+      {
+        "command": "tcoeTestPilot.runValidation",
+        "title": "TestPilot: Run Validation",
+        "icon": "$(flame)"
+      },
+      {
+        "command": "tcoeTestPilot.setTarget",
+        "title": "TestPilot: Set Target URL",
+        "icon": "$(link)"
+      },
+      {
+        "command": "tcoeTestPilot.history",
+        "title": "TestPilot: Task History",
+        "icon": "$(history)"
+      },
+      {
+        "command": "tcoeTestPilot.clearHistory",
+        "title": "TestPilot: Clear Task History"
+      },
+      {
+        "command": "tcoeTestPilot.rebuildIndex",
+        "title": "TestPilot: Rebuild Framework Index",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "tcoeTestPilot.repair",
+        "title": "TestPilot: Propose Validation Repair",
+        "icon": "$(wrench)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tcoe-testpilot",
+          "title": "TestPilot",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "tcoe-testpilot": [
+        {
+          "id": "tcoeTestPilot.side",
+          "name": "Workspace",
+          "type": "webview",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "tcoeTestPilot.plan",
+          "when": "view == tcoeTestPilot.side",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "TCOE TestPilot",
+      "properties": {
+        "tcoeTestPilot.frameworkRepo": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to your Playwright framework repository. Leave empty to use the currently opened folder."
+        },
+        "tcoeTestPilot.appName": {
+          "type": "string",
+          "default": "",
+          "description": "The ConfigManager appName key for your application. Leave empty to emit a TODO instead of guessing."
+        },
+        "tcoeTestPilot.targetUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Base URL of the application under test. Used for navigation during planning and validation. **Must not contain a username or password** — credentials belong in Playwright's own storage state."
+        },
+        "tcoeTestPilot.stateDir": {
+          "type": "string",
+          "default": ".tcoe-testpilot",
+          "description": "Folder inside the framework repository where TestPilot stores task state."
+        },
+        "tcoeTestPilot.playwrightCli": {
+          "type": "string",
+          "default": "playwright-cli",
+          "description": "Command used to invoke the Playwright CLI for browser evidence."
+        },
+        "tcoeTestPilot.runTestsDuringValidation": {
+          "type": "boolean",
+          "default": false,
+          "description": "Actually execute the framework's test script during validation. Requires a reachable, authenticated application."
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "TestPilot reads and writes your framework repository and spawns processes, so it requires a trusted workspace."
+    }
+  }
+}

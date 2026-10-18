@@ -1,0 +1,19 @@
+Test Case Title,Step,Action,Expected Result,Precondition,Application,Status
+Simple Form Test - TC01,1,Navigate to https://www.testmuai.com/selenium-playground/,,,,
+Simple Form Test - TC01,2,"Click on ""Simple Form Demo"" link.",,,Simple Form Demo,
+Simple Form Test - TC01,3,"Fill ""Test Pilot"" in the Enter Message textbox.",,,Simple Form Demo,
+Simple Form Test - TC01,4,Click on Get Checked Value button.,,,Simple Form Demo,
+Simple Form Test - TC01,5,"Validate the filled text should be displayed under ""Your message"" section as ""Test Pilot""",The Your message section displays Test Pilot.,,Simple Form Demo,
+
+Simple Form Test - TC02,1,Navigate to https://www.testmuai.com/selenium-playground/,,,,
+Simple Form Test - TC02,2,"Click on ""Simple Form Demo"" link.",,,Simple Form Demo,
+Simple Form Test - TC02,3,"Fill ""Deepak"" in the Enter Message textbox.",,,Simple Form Demo,
+Simple Form Test - TC02,4,Click on Get Checked Value button.,,,Simple Form Demo,
+Simple Form Test - TC02,5,"Validate the filled text should be displayed under ""Your message"" section as ""Deepak""",The Your message section displays Deepak.,,Simple Form Demo,
+
+Input Form Submit Test - TC03,1,Navigate to https://www.testmuai.com/selenium-playground/,,,,
+Input Form Submit Test - TC03,2,"Click on ""Input Form Submit"" link",,,Input Form Submit,
+Input Form Submit Test - TC03,3,"Fill ""Deepak"" in the Name field",,,Input Form Submit,
+Input Form Submit Test - TC03,4,"Fill ""test@email.com"" in the email field",,,Input Form Submit,
+Input Form Submit Test - TC03,5,Click on Submit button.,,,Input Form Submit,
+

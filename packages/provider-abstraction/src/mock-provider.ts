@@ -1,0 +1,174 @@
+/**
+ * Deterministic offline mock provider.
+ *
+ * Produces a plan-shaped text response (never code) with every output clearly
+ * labeled as `confidence: inference`.  Safe to use in tests and offline demos.
+ */
+
+import type {
+  ChatMessage,
+  ChatRequestOptions,
+  ChatResponse,
+  ModelInfo,
+  ModelProvider,
+  ModelProviderError,
+  ModelProviderErrorKind,
+  ModelProviderInfo,
+} from '@tcoe/shared-types'
+
+function mockCheck(): ModelProviderInfo {
+  return {
+    id: 'mock',
+    displayName: 'Mock Provider (offline)',
+    available: true,
+    liveService: false,
+    unavailableReason: 'This is a deterministic mock — no network call was made.',
+  }
+}
+
+function mockListModels(): ModelInfo[] {
+  return [
+    { id: 'mock-model', displayName: 'Mock Model (offline)' },
+  ]
+}
+
+async function mockSelectDefault(): Promise<ModelInfo | null> {
+  return { id: 'mock-model', displayName: 'Mock Model (offline)' }
+}
+
+/**
+ * Deterministic mock chat that always returns a plan-shaped response.
+ *
+ * The response:
+ * - Never claims to be a real model.
+ * - Never produces test code without a plan.
+ * - Includes all the reuse analysis fields the agent expects.
+ */
+/**
+ * Parse the step plan the deterministic analyzer produced, which the runner
+ * embeds verbatim in the user prompt. The mock only reports what was actually
+ * discovered — it must never name a method or file it did not see, because a
+ * plan that cites `form.fillField` from a nonexistent file would look like a
+ * verified recommendation to a reviewer.
+ */
+interface MockPlanStep {
+  order: number
+  resolution: string
+  action: string
+  facade: string
+  file: string
+  unresolved: string
+}
+
+function parseMockPlan(text: string): MockPlanStep[] {
+  const section = /## Step plan already computed\n([\s\S]*?)(?=\n---)/.exec(text)?.[1] ?? ''
+  const steps: MockPlanStep[] = []
+  let current: MockPlanStep | null = null
+
+  for (const line of section.split('\n')) {
+    const head = /^- step (\d+) \| (\S+) \| (.+)$/.exec(line.trim())
+    if (head) {
+      current = {
+        order: Number(head[1]),
+        resolution: head[2]!,
+        action: head[3]!,
+        facade: '',
+        file: '',
+        unresolved: '',
+      }
+      steps.push(current)
+      continue
+    }
+    if (!current) continue
+    const facade = /^\s*facade=(.*)$/.exec(line)
+    if (facade) {
+      current.facade = facade[1]!
+      continue
+    }
+    const file = /^\s*file=(.*)$/.exec(line)
+    if (file) {
+      current.file = file[1]!
+      continue
+    }
+    const unresolved = /^\s*unresolved:\s*(.+)$/.exec(line)
+    if (unresolved) current.unresolved = unresolved[1]!
+  }
+  return steps
+}
+
+async function mockChat(
+  messages: ChatMessage[],
+  _options: ChatRequestOptions,
+): Promise<ChatResponse> {
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+  const titleMatch = lastUser.match(/\*\*Title:\*\*\s*(.+)/)
+  const title = titleMatch?.[1] ?? 'Test Case'
+  const decisionMatch = lastUser.match(/"decision":\s*"([^"]+)"/) ?? lastUser.match(/\*\*Decision:\*\*\s*(\S+)/)
+  const decision = decisionMatch?.[1] ?? 'create-new'
+  const steps = parseMockPlan(lastUser)
+
+  const planLines: string[] = [
+    `## Plan — ${title}`,
+    '',
+    `**Decision:** ${decision}`,
+    '',
+  ]
+
+  if (steps.length === 0) {
+    planLines.push(
+      'No step plan was supplied, so no step-level mapping is available.',
+      '',
+      '**Confidence:** inference (mock provider — not verified against real framework)',
+    )
+  }
+
+  for (const step of steps) {
+    planLines.push(`${step.order}. **Action:** ${step.action}`)
+    planLines.push(`   → **Resolution:** ${step.resolution}`)
+
+    if (step.resolution === 'unresolved' || step.resolution === 'new-method') {
+      planLines.push(`   → **Unresolved reason:** ${step.unresolved || 'No matching framework method was found. A new helper must be reviewed before generation.'}`)
+      continue
+    }
+
+    if (!step.facade || !step.file) {
+      // A resolution that claims an existing symbol must name one. If the
+      // analyzer did not produce one, saying so is more useful than inventing it.
+      if (step.resolution === 'assertion') {
+        planLines.push(`   → **Needs:** an assertion helper must be chosen. The analyzer matched no existing expectation method to this expected result.`)
+      } else {
+        planLines.push(`   → **Evidence:** resolution is "${step.resolution}" but no facade path or file was recorded.`)
+      }
+      continue
+    }
+
+    planLines.push(`   → **Facade path:** ${step.facade}`)
+    planLines.push(`   → **Evidence:** ${step.facade} found in ${step.file}`)
+  }
+
+  planLines.push(
+    '',
+    '**Proposed changes:**',
+    '- create: tests/e2e/<generated-spec>.spec.ts',
+    '',
+    '**Confidence:** inference (mock provider — not verified against real framework)',
+    '**Provider:** mock (offline, deterministic)',
+    '',
+    '---',
+    'This plan was generated by the mock provider and has not been verified against the actual framework.',
+    'Set provider=openai-compatible in tcoe-testpilot.config.json and provide an API key to use a real model.',
+  )
+
+  return {
+    text: planLines.join('\n'),
+    modelId: 'mock-model',
+    liveService: false,
+  }
+}
+
+export const mockProvider: ModelProvider = {
+  check: async () => mockCheck(),
+  listModels: async () => mockListModels(),
+  selectDefault: async () => mockSelectDefault(),
+  chat: mockChat,
+}

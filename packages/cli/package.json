@@ -1,0 +1,20 @@
+{
+  "name": "@tcoe/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TCOE TestPilot command line interface.",
+  "type": "module",
+  "bin": {
+    "testpilot": "bin/testpilot.ts"
+  },
+  "scripts": {
+    "testpilot": "node --experimental-strip-types bin/testpilot.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@tcoe/shared-types": "*",
+    "@tcoe/repo-intelligence": "*",
+    "@tcoe/adapters": "*",
+    "@tcoe/provider-abstraction": "*"
+  }
+}

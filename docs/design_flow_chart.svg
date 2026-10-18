@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1660" viewBox="0 0 1400 1660" role="img" aria-labelledby="title desc">
+  <title id="title">TCOE TestPilot implemented workflow</title>
+  <desc id="desc">Current workflow from manual test case through analysis, optional page snapshot, plan review, deterministic proposal, approved apply, and validation. Failed validation can lead to a bounded, approved repair proposal and re-validation.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#58708e"/></marker>
+    <style>
+      text{font-family:Segoe UI,Arial,sans-serif;fill:#17324f}.title{font-size:34px;font-weight:700}.subtitle{font-size:18px;fill:#52677d}.label{font-size:20px;font-weight:700}.small{font-size:15px;fill:#39536d}.node{stroke-width:2.5;rx:16}.flow{fill:none;stroke:#58708e;stroke-width:3;marker-end:url(#arrow)}.decision{fill:#fff8df;stroke:#d69b17}.stage{fill:#edf5ff;stroke:#4484ce}.approval{fill:#f0edff;stroke:#7865c7}.artifact{fill:#e8f7f2;stroke:#3c9b7d}.report{fill:#fff0eb;stroke:#d37c55}
+    </style>
+  </defs>
+  <rect width="1400" height="1660" fill="#ffffff"/>
+  <text x="700" y="55" text-anchor="middle" class="title">TCOE TestPilot — Implemented Workflow</text>
+  <text x="700" y="86" text-anchor="middle" class="subtitle">Page observations stay separate from per-step locator evidence</text>
+
+  <rect x="420" y="120" width="560" height="86" class="node artifact"/>
+  <text x="700" y="154" text-anchor="middle" class="label">Manual test case</text>
+  <text x="700" y="181" text-anchor="middle" class="small">pasted text · .txt · .md · .csv · .xlsx</text>
+  <path d="M700 206 V240" class="flow"/>
+
+  <rect x="420" y="245" width="560" height="88" class="node stage"/>
+  <text x="700" y="280" text-anchor="middle" class="label">Understand · Normalize and validate</text>
+  <text x="700" y="308" text-anchor="middle" class="small">Invalid input stops with actionable issues</text>
+  <path d="M700 333 V367" class="flow"/>
+
+  <rect x="420" y="372" width="560" height="88" class="node stage"/>
+  <text x="700" y="407" text-anchor="middle" class="label">Observe · Scan and index framework</text>
+  <text x="700" y="435" text-anchor="middle" class="small">Source facts, conventions, tests, locators</text>
+  <path d="M700 460 V494" class="flow"/>
+
+  <rect x="420" y="499" width="560" height="88" class="node stage"/>
+  <text x="700" y="534" text-anchor="middle" class="label">Retrieve · Find reuse and duplicates</text>
+  <text x="700" y="562" text-anchor="middle" class="small">Map each step to discovered framework symbols</text>
+  <path d="M700 587 V621" class="flow"/>
+
+  <polygon points="700,624 865,690 700,756 535,690" class="node decision"/>
+  <text x="700" y="685" text-anchor="middle" class="label">Browse requested?</text>
+  <text x="700" y="712" text-anchor="middle" class="small">explicit opt-in only</text>
+  <path d="M865 690 H1020 V790" class="flow"/>
+  <text x="900" y="674" class="small">yes</text>
+  <path d="M700 756 V790" class="flow"/>
+  <text x="716" y="780" class="small">no</text>
+
+  <rect x="855" y="795" width="440" height="112" class="node artifact"/>
+  <text x="1075" y="832" text-anchor="middle" class="label">Capture page snapshot</text>
+  <text x="1075" y="860" text-anchor="middle" class="small">Navigation + accessibility refs</text>
+  <text x="1075" y="884" text-anchor="middle" class="small">No step-to-element mapping is claimed</text>
+  <path d="M1075 907 V944 H700 V978" class="flow"/>
+  <path d="M700 790 V978" class="flow"/>
+
+  <rect x="420" y="983" width="560" height="105" class="node stage"/>
+  <text x="700" y="1023" text-anchor="middle" class="label">Plan · Provider narrative</text>
+  <text x="700" y="1052" text-anchor="middle" class="small">Task saved as AwaitingApproval; no files written</text>
+  <path d="M700 1088 V1122" class="flow"/>
+
+  <rect x="420" y="1127" width="560" height="91" class="node approval"/>
+  <text x="700" y="1163" text-anchor="middle" class="label">Human reviews plan</text>
+  <text x="700" y="1191" text-anchor="middle" class="small">CLI: generate command · Extension: Generate Proposal</text>
+  <path d="M700 1218 V1252" class="flow"/>
+
+  <rect x="420" y="1257" width="560" height="101" class="node stage"/>
+  <text x="700" y="1296" text-anchor="middle" class="label">Generate deterministic proposal</text>
+  <text x="700" y="1325" text-anchor="middle" class="small">Framework emitter; unresolved locators remain TODOs</text>
+  <path d="M700 1358 V1392" class="flow"/>
+
+  <rect x="420" y="1397" width="560" height="91" class="node approval"/>
+  <text x="700" y="1433" text-anchor="middle" class="label">Review diff and approve apply</text>
+  <text x="700" y="1461" text-anchor="middle" class="small">CLI: apply command · Extension: modal confirmation</text>
+  <path d="M700 1488 V1522" class="flow"/>
+
+  <rect x="420" y="1527" width="560" height="91" class="node stage"/>
+  <text x="700" y="1563" text-anchor="middle" class="label">Apply and validate</text>
+  <text x="700" y="1591" text-anchor="middle" class="small">Failed validation → up to two reviewed repair proposals → re-validation</text>
+</svg>

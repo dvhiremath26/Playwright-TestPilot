@@ -1,0 +1,8 @@
+Create a new material document
+
+1. Navigate to the Fiori launchpad
+2. Search for the Create Material app
+3. Enter a new material number
+4. Enter the material description
+5. Click Save
+6. Expected: the material document is created successfully

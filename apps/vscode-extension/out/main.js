@@ -282562,13 +282562,6 @@ var import_node_path11 = require("node:path");
 // apps/vscode-extension/src/copilot-bridge.ts
 init_src();
 init_src2();
-var VSCODE_LM_SUPPORTED_FAMILIES = /* @__PURE__ */ new Set([
-  "gpt-4o",
-  "gpt-4o-mini",
-  "o1",
-  "o1-mini",
-  "claude-3.5-sonnet"
-]);
 function createCopilotBridge() {
   const vscode2 = require("vscode");
   async function discover() {
@@ -282581,23 +282574,13 @@ function createCopilotBridge() {
           models: []
         };
       }
-      const discovered = sessions.map((s) => ({
+      const models = sessions.map((s) => ({
         id: s.id,
         displayName: s.name || s.id,
         vendor: s.vendor,
         family: s.family,
         contextTokens: s.maxInputTokens
       }));
-      const models = discovered.filter(
-        (model) => VSCODE_LM_SUPPORTED_FAMILIES.has(model.family?.toLowerCase() ?? "")
-      );
-      if (models.length === 0) {
-        return {
-          available: false,
-          reason: "Copilot returned models, but none are documented as supported for extension requests by the VS Code Language Model API. Choose a supported model such as GPT-4o in Copilot Chat, then try again.",
-          models: []
-        };
-      }
       return {
         available: true,
         models

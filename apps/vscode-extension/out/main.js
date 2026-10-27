@@ -288402,9 +288402,8 @@ var WorkspaceService = class {
       vscode.commands.registerCommand("tcoeTestPilot.open", () => this.open()),
       vscode.commands.registerCommand("tcoeTestPilot.plan", (raw) => this.plan(raw)),
       vscode.commands.registerCommand("tcoeTestPilot.generate", (raw) => this.plan(raw)),
-      vscode.commands.registerCommand("tcoeTestPilot.selectFile", () => this.useOpenTestCaseFile()),
+      vscode.commands.registerCommand("tcoeTestPilot.selectFile", () => this.selectTestCaseFile()),
       vscode.commands.registerCommand("tcoeTestPilot.useSelection", () => this.useEditorSelection()),
-      vscode.commands.registerCommand("tcoeTestPilot.openFolder", () => vscode.commands.executeCommand("workbench.action.files.openFolder")),
       vscode.commands.registerCommand("tcoeTestPilot.apply", () => this.apply()),
       vscode.commands.registerCommand("tcoeTestPilot.acceptProposal", () => this.acceptProposal()),
       vscode.commands.registerCommand("tcoeTestPilot.rejectProposal", () => this.rejectProposal()),
@@ -288606,22 +288605,18 @@ ${driftBeforeApply.map((reason) => `\u2022 ${reason}`).join("\n")}`);
       await vscode.window.showErrorMessage(this.message(err));
     }
   }
-  /** Use the active VS Code tab as the manual case source without opening a picker. */
-  async useOpenTestCaseFile() {
-    const editor = vscode.window.activeTextEditor;
-    const activeInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-    const activeUri = activeInput instanceof vscode.TabInputText || activeInput instanceof vscode.TabInputCustom || activeInput instanceof vscode.TabInputNotebook ? activeInput.uri : editor?.document.uri;
-    if (!activeUri || !/\.(?:txt|md|csv|xlsx)$/i.test(activeUri.fsPath)) {
-      await vscode.window.showInformationMessage("Open a .txt, .md, .csv, or .xlsx manual test case file, then choose Use open file.");
-      return;
-    }
-    const name = (0, import_node_path11.basename)(activeUri.fsPath);
-    if (editor && editor.document.uri.toString() === activeUri.toString() && !/\.xlsx$/i.test(name)) {
-      this.panel.setManualCase(editor.document.getText(), name);
-    } else {
-      this.panel.setSelectedFile(activeUri.fsPath, name);
-    }
-    this.panel.postStatus(`Loaded open manual test case file: ${name}. Click Generate when ready.`);
+  /** Pick a supported manual test case document. */
+  async selectTestCaseFile() {
+    const files = await vscode.window.showOpenDialog({
+      title: "Select manual test case file",
+      canSelectMany: false,
+      openLabel: "Select test file",
+      filters: { "Manual test case files": ["txt", "md", "csv", "xlsx"] }
+    });
+    const file = files?.[0];
+    if (!file) return;
+    this.panel.setSelectedFile(file.fsPath, (0, import_node_path11.basename)(file.fsPath));
+    this.panel.postStatus(`Selected manual test case file: ${(0, import_node_path11.basename)(file.fsPath)}. Click Generate when ready.`);
   }
   /** Load the current editor selection into the manual case editor. */
   async useEditorSelection() {
@@ -289286,9 +289281,6 @@ var WebviewViewProvider = class {
   .input-frame { border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
                  border-radius: 9px; padding: 4px; background: var(--vscode-input-background); }
   .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .project-link { align-self: flex-start; border: 0; padding: 0; margin: 0; width: auto;
-                  color: var(--vscode-textLink-foreground); background: transparent; }
-  .project-link:hover { color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
   .section-heading { font-size: 12px; letter-spacing: .6px; margin: 3px 0 0; color: var(--vscode-descriptionForeground); }
   .divider { border: 0; border-top: 1px solid var(--vscode-panel-border); margin: 6px 0; }
   .status-card { border: 1px solid var(--vscode-panel-border); border-radius: 9px; padding: 12px;
@@ -289351,12 +289343,11 @@ var WebviewViewProvider = class {
     </div>
   </section>
   <div class="actions input-actions">
-    <button id="selectFile" class="outline">Use open file</button>
+    <button id="selectFile" class="outline">Select test file</button>
     <button id="useSelection" class="outline">Use selection</button>
   </div>
   <div id="selectedFile" aria-live="polite">No document selected</div>
   <button id="generate">Generate</button>
-  <button id="openFolder" class="project-link">Open a project folder\u2026</button>
   <hr class="divider">
   <h2 class="section-heading">STATUS</h2>
   <div class="status-card" role="status" aria-live="polite">
@@ -289422,7 +289413,6 @@ var WebviewViewProvider = class {
   for (const id of ['selectFile', 'useSelection', 'history', 'open', 'setTarget', 'runValidation', 'repair', 'clearHistory', 'rebuildIndex']) {
     document.getElementById(id).onclick = () => vscode.postMessage({ command: id });
   }
-  document.getElementById('openFolder').onclick = () => vscode.postMessage({ command: 'openFolder' });
   acceptButton.onclick = () => vscode.postMessage({ command: 'acceptProposal' });
   rejectButton.onclick = () => vscode.postMessage({ command: 'rejectProposal' });
   validateButton.onclick = () => {

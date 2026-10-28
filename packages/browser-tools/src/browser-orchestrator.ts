@@ -175,6 +175,16 @@ export class BrowserSession {
     }
   }
 
+  /** Wait for load + network idle on the currently active backend. */
+  async waitForPageReady(options?: BrowserCallOptions): Promise<BrowserActionResult & { provenance: BackendProvenance }> {
+    return this.execute(
+      (tool, callOptions) => tool.waitForPageReady
+        ? tool.waitForPageReady(callOptions)
+        : Promise.resolve({ ok: true, output: 'Backend does not expose an explicit page readiness wait.' }),
+      options,
+    )
+  }
+
   /**
    * Capture a snapshot and normalize it.
    *

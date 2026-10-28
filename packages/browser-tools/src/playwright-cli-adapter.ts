@@ -22,6 +22,7 @@
  */
 
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
@@ -194,7 +195,9 @@ export class PlaywrightCliAdapter implements BrowserTool {
   }
 
   constructor(opts: PlaywrightCliAdapterOptions = {}) {
-    this.opts = opts
+    // A unique, non-persistent named session prevents the CLI's default session or
+    // PLAYWRIGHT_CLI_SESSION from carrying cookies/storage into a new TestPilot run.
+    this.opts = { ...opts, session: opts.session ?? `tcoe-${randomBytes(8).toString('hex')}` }
   }
 
   /**
@@ -226,6 +229,11 @@ export class PlaywrightCliAdapter implements BrowserTool {
 
   async navigate(url: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
     return this.run(['goto', url], options)
+  }
+
+  async waitForPageReady(options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    const code = 'async page => { await page.waitForLoadState("load", { timeout: 10000 }); await page.waitForLoadState("networkidle", { timeout: 15000 }); return "Page reached load and networkidle"; }'
+    return this.run(['run-code', code], options)
   }
 
   async snapshot(target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {

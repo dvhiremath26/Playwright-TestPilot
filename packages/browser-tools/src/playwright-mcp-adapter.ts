@@ -117,6 +117,16 @@ export class PlaywrightMcpAdapter implements BrowserTool {
     return this.call('browser_navigate', { url }, options)
   }
 
+  async waitForPageReady(options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    const runCodeTool = ['browser_run_code_unsafe', 'browser_run_code']
+      .find((name) => this.toolSchemas.has(name))
+    if (!runCodeTool) {
+      return { ok: false, error: 'Playwright MCP does not expose a Playwright code tool required to wait for load and networkidle.' }
+    }
+    const code = 'async page => { await page.waitForLoadState("load", { timeout: 10000 }); await page.waitForLoadState("networkidle", { timeout: 15000 }); return "Page reached load and networkidle"; }'
+    return this.call(runCodeTool, { code }, options)
+  }
+
   async snapshot(target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
     return this.call('browser_snapshot', target ? { target } : {}, options)
   }
@@ -374,6 +384,8 @@ export class PlaywrightMcpAdapter implements BrowserTool {
         ...(this.opts.browser ? ['--browser', this.opts.browser] : []),
         ...(this.opts.allowedHosts?.length ? ['--allowed-hosts', this.opts.allowedHosts.join(',')] : []),
       ]
+      // Never carry browser profile state between TestPilot runs.
+      if (!args.includes('--isolated')) args.push('--isolated')
 
       const child = spawn(command, args, {
         cwd: this.opts.cwd,

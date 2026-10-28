@@ -89,6 +89,9 @@ export interface BrowserTool {
   /** Navigate within an existing session. */
   navigate(url: string, options?: BrowserCallOptions): Promise<BrowserActionResult>
 
+  /** Wait for the current document's load event and network-idle state. */
+  waitForPageReady?(options?: BrowserCallOptions): Promise<BrowserActionResult>
+
   /** Capture the current page snapshot — the primary evidence source. */
   snapshot(target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult>
 

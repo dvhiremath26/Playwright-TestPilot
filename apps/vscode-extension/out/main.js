@@ -282555,7 +282555,7 @@ __export(main_exports, {
 });
 module.exports = __toCommonJS(main_exports);
 var vscode = __toESM(require("vscode"));
-var import_node_crypto3 = require("node:crypto");
+var import_node_crypto4 = require("node:crypto");
 var import_node_fs9 = require("node:fs");
 var import_node_path11 = require("node:path");
 
@@ -282683,7 +282683,7 @@ function resolveWorkspaceConfig(config, workspaceRoot) {
 init_src2();
 
 // packages/cli/src/runner.ts
-var import_node_crypto2 = require("node:crypto");
+var import_node_crypto3 = require("node:crypto");
 var import_node_fs7 = require("node:fs");
 var import_node_path9 = require("node:path");
 
@@ -285825,6 +285825,7 @@ init_src2();
 
 // packages/browser-tools/src/playwright-cli-adapter.ts
 var import_node_child_process2 = require("node:child_process");
+var import_node_crypto2 = require("node:crypto");
 var import_node_fs6 = require("node:fs");
 var import_node_path8 = require("node:path");
 
@@ -285917,7 +285918,7 @@ var PlaywrightCliAdapter = class {
     label: "Playwright CLI"
   };
   constructor(opts = {}) {
-    this.opts = opts;
+    this.opts = { ...opts, session: opts.session ?? `tcoe-${(0, import_node_crypto2.randomBytes)(8).toString("hex")}` };
   }
   /**
    * Cheap availability check. Verifies the binary resolves without launching a browser.
@@ -285944,6 +285945,10 @@ var PlaywrightCliAdapter = class {
   }
   async navigate(url, options) {
     return this.run(["goto", url], options);
+  }
+  async waitForPageReady(options) {
+    const code = 'async page => { await page.waitForLoadState("load", { timeout: 10000 }); await page.waitForLoadState("networkidle", { timeout: 15000 }); return "Page reached load and networkidle"; }';
+    return this.run(["run-code", code], options);
   }
   async snapshot(target, options) {
     const args = ["snapshot", ...target === void 0 ? [] : [target], "--depth=12"];
@@ -286189,6 +286194,14 @@ var PlaywrightMcpAdapter = class {
   async navigate(url, options) {
     return this.call("browser_navigate", { url }, options);
   }
+  async waitForPageReady(options) {
+    const runCodeTool = ["browser_run_code_unsafe", "browser_run_code"].find((name) => this.toolSchemas.has(name));
+    if (!runCodeTool) {
+      return { ok: false, error: "Playwright MCP does not expose a Playwright code tool required to wait for load and networkidle." };
+    }
+    const code = 'async page => { await page.waitForLoadState("load", { timeout: 10000 }); await page.waitForLoadState("networkidle", { timeout: 15000 }); return "Page reached load and networkidle"; }';
+    return this.call(runCodeTool, { code }, options);
+  }
   async snapshot(target, options) {
     return this.call("browser_snapshot", target ? { target } : {}, options);
   }
@@ -286401,6 +286414,7 @@ var PlaywrightMcpAdapter = class {
         ...this.opts.browser ? ["--browser", this.opts.browser] : [],
         ...this.opts.allowedHosts?.length ? ["--allowed-hosts", this.opts.allowedHosts.join(",")] : []
       ];
+      if (!args.includes("--isolated")) args.push("--isolated");
       const child = (0, import_node_child_process3.spawn)(command, args, {
         cwd: this.opts.cwd,
         env: { ...process.env, ...this.opts.env ?? {} },
@@ -286563,6 +286577,13 @@ var BrowserSession = class {
       source: r.provenance
     };
   }
+  /** Wait for load + network idle on the currently active backend. */
+  async waitForPageReady(options) {
+    return this.execute(
+      (tool, callOptions) => tool.waitForPageReady ? tool.waitForPageReady(callOptions) : Promise.resolve({ ok: true, output: "Backend does not expose an explicit page readiness wait." }),
+      options
+    );
+  }
   /**
    * Capture a snapshot and normalize it.
    *
@@ -286696,7 +286717,7 @@ var StageTracker = class {
   }
 };
 async function runAgent(options) {
-  const taskId = (0, import_node_crypto2.randomUUID)();
+  const taskId = (0, import_node_crypto3.randomUUID)();
   const tracker = new StageTracker(options.onStage);
   const modelCalls = [];
   const task = {
@@ -286950,6 +286971,7 @@ async function gatherEvidenceForTestCase(browser, options) {
     throw new Error(navigation.detail);
   }
   evidence.push(navigation);
+  await waitForPageReady("Initial navigation");
   let currentUrl = options.targetUrl;
   let snapshot = await captureScreen("Starting page", currentUrl);
   const locatorActionSteps = options.steps.filter((step) => isLocatorAction(step.action));
@@ -286976,6 +286998,7 @@ async function gatherEvidenceForTestCase(browser, options) {
           }
           evidence.push({ ...result, detail: `Step ${step.order}: ${result.detail}` });
           currentUrl = explicitUrl;
+          await waitForPageReady(`Step ${step.order} navigation`);
           snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl);
         }
         continue;
@@ -287057,6 +287080,7 @@ async function gatherEvidenceForTestCase(browser, options) {
         if (!result.ok) {
           throw new Error(`Step ${step.order} could not be replayed safely: ${result.error ?? "browser action failed"}. No later screen evidence was collected.`);
         }
+        await waitForPageReady(`Step ${step.order} action`);
         evidence.push({
           kind: "interaction",
           detail: `Step ${step.order} replayed: ${step.action}`,
@@ -287095,6 +287119,12 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
       source
     });
     return observed;
+  }
+  async function waitForPageReady(label) {
+    const ready = await browser.waitForPageReady({ signal: options.signal });
+    if (!ready.ok) {
+      throw new Error(`${label} did not reach both the load and network-idle states: ${ready.error ?? "browser readiness wait failed"}.`);
+    }
   }
   async function candidatesForStep(observed, stepOrder, stepAction, pageUrl, elements = observed.elements.filter((item) => item.actionable !== false).slice(0, 20)) {
     if (!(browser.capabilities?.canGenerateLocator ?? false)) return [];
@@ -289419,7 +289449,7 @@ var WebviewViewProvider = class {
     void this.view?.webview.postMessage({ kind: "manual-case", text, name });
   }
   html(webview) {
-    const nonce = (0, import_node_crypto3.randomBytes)(16).toString("base64");
+    const nonce = (0, import_node_crypto4.randomBytes)(16).toString("base64");
     return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8">

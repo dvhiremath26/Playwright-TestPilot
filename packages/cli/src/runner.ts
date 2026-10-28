@@ -480,6 +480,7 @@ export async function gatherEvidenceForTestCase(
     throw new Error(navigation.detail)
   }
   evidence.push(navigation)
+  await waitForPageReady('Initial navigation')
 
   let currentUrl = options.targetUrl
   let snapshot = await captureScreen('Starting page', currentUrl)
@@ -512,6 +513,7 @@ export async function gatherEvidenceForTestCase(
         }
         evidence.push({ ...result, detail: `Step ${step.order}: ${result.detail}` })
         currentUrl = explicitUrl
+        await waitForPageReady(`Step ${step.order} navigation`)
         snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl)
       }
       continue
@@ -608,6 +610,7 @@ export async function gatherEvidenceForTestCase(
       if (!result.ok) {
         throw new Error(`Step ${step.order} could not be replayed safely: ${result.error ?? 'browser action failed'}. No later screen evidence was collected.`)
       }
+      await waitForPageReady(`Step ${step.order} action`)
       evidence.push({
         kind: 'interaction',
         detail: `Step ${step.order} replayed: ${step.action}`,
@@ -652,6 +655,13 @@ export async function gatherEvidenceForTestCase(
       source,
     })
     return observed
+  }
+
+  async function waitForPageReady(label: string): Promise<void> {
+    const ready = await browser.waitForPageReady({ signal: options.signal })
+    if (!ready.ok) {
+      throw new Error(`${label} did not reach both the load and network-idle states: ${ready.error ?? 'browser readiness wait failed'}.`)
+    }
   }
 
   async function candidatesForStep(

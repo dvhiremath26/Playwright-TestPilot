@@ -285946,7 +285946,7 @@ var PlaywrightCliAdapter = class {
     return this.run(["goto", url], options);
   }
   async snapshot(target, options) {
-    const args = target === void 0 ? ["snapshot"] : ["snapshot", target];
+    const args = ["snapshot", ...target === void 0 ? [] : [target], "--depth=12"];
     return this.run(args, options);
   }
   async find(text, options) {
@@ -286798,7 +286798,7 @@ async function runAgent(options) {
             const messages = [
               {
                 role: "system",
-                content: 'Select the single snapshot element that best matches the manual browser step and requested action. Choose only a ref from the supplied candidates. Never invent a ref or locator. If the candidates do not clearly identify the intended element, abstain. Return only JSON: {"ref":"exact-ref"} or {"ref":null,"reason":"short reason"}.'
+                content: 'Select the snapshot element that best matches the manual browser step and requested action. Do not require an exact text match: account for similar wording, plurals, abbreviations, common synonyms, and the surrounding navigation context (for example, "Project List" may match "Project Listing"). Choose the closest plausible candidate when one is clear; abstain only when no candidate is plausibly related or multiple candidates are similarly likely. Choose only a ref from the supplied candidates. Never invent a ref or locator. Return only JSON: {"ref":"exact-ref","confidence":0.0,"reason":"short match rationale"} or {"ref":null,"confidence":0.0,"reason":"short reason"}.'
               },
               {
                 role: "user",
@@ -286822,7 +286822,7 @@ async function runAgent(options) {
               purpose: "locator-selection"
             });
             const selected = parseSnapshotTargetSelection(selection.text);
-            if (!selected.ref) {
+            if (!selected.ref || selected.confidence !== void 0 && (selected.confidence < 0.65 || selected.confidence > 1)) {
               throw new Error(`Step "${stepAction}" has no confident match in the current Playwright snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ""}`);
             }
             const match = candidates.filter((candidate) => candidate.ref === selected.ref);
@@ -287090,12 +287090,20 @@ function parseSnapshotTargetSelection(text) {
     throw new Error("The selected model returned no ref for its snapshot element selection.");
   }
   const ref = parsed.ref;
+  const confidence = parsed.confidence;
   const reason = parsed.reason;
-  if (ref === null) return { reason: typeof reason === "string" ? reason : void 0 };
+  if (ref === null) return {
+    confidence: typeof confidence === "number" ? confidence : void 0,
+    reason: typeof reason === "string" ? reason : void 0
+  };
   if (typeof ref !== "string" || !ref.trim()) {
     throw new Error("The selected model returned an invalid ref for its snapshot element selection.");
   }
-  return { ref: ref.trim() };
+  return {
+    ref: ref.trim(),
+    confidence: typeof confidence === "number" ? confidence : void 0,
+    reason: typeof reason === "string" ? reason : void 0
+  };
 }
 function isLocatorAction(action) {
   return /^\s*(?:\d+[.)]\s*)?(?:click|tap|enter|type|fill|input|select|choose|check|uncheck|hover)\b/i.test(action);
@@ -287152,7 +287160,7 @@ function parseReplayAction(action) {
   return void 0;
 }
 function cleanActionTarget(value) {
-  return value.replace(/\s+(?:in|from)\s+(?:the\s+)?(?:left\s+|right\s+)?(?:side\s*bar|navigation(?:\s+bar)?|nav(?:\s+bar)?|menu|tab|link)\b.*$/i, "").replace(/^[\s"'`]+|[\s"'`.,]+$/g, "").replace(/\s+(?:button|link|tab|menu\s*item|checkbox|radio\s*button|field|textbox|input|icon)$/i, "").replace(/^the\s+/i, "").trim();
+  return value.replace(/\s+(?:in|from)\s+(?:the\s+)?(?:left\s+|right\s+)?(?:side\s*bar|navigation(?:\s+bar)?|nav(?:\s+bar)?|menu|tab|link)\b.*$/i, "").replace(/^[\s"'`]+|[\s"'`.,]+$/g, "").replace(/\s+(?:button|link|tab|menu\s*item|sub\s*menu|checkbox|radio\s*button|field|textbox|input|icon)$/i, "").replace(/^the\s+/i, "").trim();
 }
 function stripWrappingQuotes(value) {
   return value.trim().replace(/^["'`]|["'`]$/g, "");

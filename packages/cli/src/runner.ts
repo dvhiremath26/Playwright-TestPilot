@@ -304,7 +304,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
                 const messages: ChatMessage[] = [
                   {
                     role: 'system',
-                    content: 'Select the single snapshot element that best matches the manual browser step and requested action. Choose only a ref from the supplied candidates. Never invent a ref or locator. If the candidates do not clearly identify the intended element, abstain. Return only JSON: {"ref":"exact-ref"} or {"ref":null,"reason":"short reason"}.',
+                    content: 'Select the snapshot element that best matches the manual browser step and requested action. Do not require an exact text match: account for similar wording, plurals, abbreviations, common synonyms, and the surrounding navigation context (for example, "Project List" may match "Project Listing"). Choose the closest plausible candidate when one is clear; abstain only when no candidate is plausibly related or multiple candidates are similarly likely. Choose only a ref from the supplied candidates. Never invent a ref or locator. Return only JSON: {"ref":"exact-ref","confidence":0.0,"reason":"short match rationale"} or {"ref":null,"confidence":0.0,"reason":"short reason"}.',
                   },
                   {
                     role: 'user',
@@ -328,7 +328,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
                   purpose: 'locator-selection',
                 })
                 const selected = parseSnapshotTargetSelection(selection.text)
-                if (!selected.ref) {
+                if (!selected.ref || (selected.confidence !== undefined && (selected.confidence < 0.65 || selected.confidence > 1))) {
                   throw new Error(`Step "${stepAction}" has no confident match in the current Playwright snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ''}`)
                 }
                 const match = candidates.filter((candidate) => candidate.ref === selected.ref)
@@ -650,7 +650,7 @@ type ReplayAction =
 
 type SnapshotSelectionAction = ReplayAction['kind'] | 'assert-visible'
 
-function parseSnapshotTargetSelection(text: string): { ref?: string; reason?: string } {
+function parseSnapshotTargetSelection(text: string): { ref?: string; confidence?: number; reason?: string } {
   const normalized = text.trim().replace(/^```(?:json)?\s*|\s*```$/gi, '').trim()
   const start = normalized.indexOf('{')
   const end = normalized.lastIndexOf('}')
@@ -665,12 +665,20 @@ function parseSnapshotTargetSelection(text: string): { ref?: string; reason?: st
     throw new Error('The selected model returned no ref for its snapshot element selection.')
   }
   const ref = (parsed as { ref?: unknown }).ref
+  const confidence = (parsed as { confidence?: unknown }).confidence
   const reason = (parsed as { reason?: unknown }).reason
-  if (ref === null) return { reason: typeof reason === 'string' ? reason : undefined }
+  if (ref === null) return {
+    confidence: typeof confidence === 'number' ? confidence : undefined,
+    reason: typeof reason === 'string' ? reason : undefined,
+  }
   if (typeof ref !== 'string' || !ref.trim()) {
     throw new Error('The selected model returned an invalid ref for its snapshot element selection.')
   }
-  return { ref: ref.trim() }
+  return {
+    ref: ref.trim(),
+    confidence: typeof confidence === 'number' ? confidence : undefined,
+    reason: typeof reason === 'string' ? reason : undefined,
+  }
 }
 
 function isLocatorAction(action: string): boolean {
@@ -741,7 +749,7 @@ function cleanActionTarget(value: string): string {
   return value
     .replace(/\s+(?:in|from)\s+(?:the\s+)?(?:left\s+|right\s+)?(?:side\s*bar|navigation(?:\s+bar)?|nav(?:\s+bar)?|menu|tab|link)\b.*$/i, '')
     .replace(/^[\s"'`]+|[\s"'`.,]+$/g, '')
-    .replace(/\s+(?:button|link|tab|menu\s*item|checkbox|radio\s*button|field|textbox|input|icon)$/i, '')
+    .replace(/\s+(?:button|link|tab|menu\s*item|sub\s*menu|checkbox|radio\s*button|field|textbox|input|icon)$/i, '')
     .replace(/^the\s+/i, '')
     .trim()
 }

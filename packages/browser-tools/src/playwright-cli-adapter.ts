@@ -229,7 +229,10 @@ export class PlaywrightCliAdapter implements BrowserTool {
   }
 
   async snapshot(target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
-    const args = target === undefined ? ['snapshot'] : ['snapshot', target]
+    // Deep navigation menus and nested application controls are common in SAP-style UIs.
+    // The CLI's default snapshot depth can omit those descendants, leaving the model with
+    // no valid ref even after the parent menu has opened.
+    const args = ['snapshot', ...(target === undefined ? [] : [target]), '--depth=12']
     return this.run(args, options)
   }
 

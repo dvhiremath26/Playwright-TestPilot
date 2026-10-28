@@ -286500,6 +286500,13 @@ var BrowserSession = class {
     const active = this.activeBackend;
     return active?.capabilities;
   }
+  /** Switch deliberately to MCP when the primary snapshot cannot support a step match. */
+  activateFallback(reason) {
+    if (!this.fallback?.available || this.usedFallback) return false;
+    this.fallbackReason = reason;
+    this.activeBackendId = "playwright-mcp";
+    return true;
+  }
   /**
    * Run a browser call with fallback.
    *
@@ -286640,6 +286647,12 @@ function createBrowserSession(options) {
 }
 
 // packages/cli/src/runner.ts
+var SnapshotTargetUnavailableError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "SnapshotTargetUnavailableError";
+  }
+};
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
@@ -286823,11 +286836,11 @@ async function runAgent(options) {
             });
             const selected = parseSnapshotTargetSelection(selection.text);
             if (!selected.ref || selected.confidence !== void 0 && (selected.confidence < 0.65 || selected.confidence > 1)) {
-              throw new Error(`Step "${stepAction}" has no confident match in the current Playwright snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ""}`);
+              throw new SnapshotTargetUnavailableError(`Step "${stepAction}" has no confident match in the Playwright CLI snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ""}`);
             }
             const match = candidates.filter((candidate) => candidate.ref === selected.ref);
             if (match.length !== 1) {
-              throw new Error(`The selected model returned ref "${selected.ref}", which is not a unique element in the current Playwright snapshot.`);
+              throw new SnapshotTargetUnavailableError(`The selected model returned ref "${selected.ref}", which is not a unique element in the Playwright CLI snapshot.`);
             }
             return match[0];
           } : void 0,
@@ -286942,102 +286955,112 @@ async function gatherEvidenceForTestCase(browser, options) {
     }
     return { evidence, locatorCandidates };
   }
-  for (const step of options.steps) {
-    if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
-    const explicitUrl = extractStepUrl(step.action);
-    if (explicitUrl) {
-      if (normalizeUrl(explicitUrl) !== normalizeUrl(currentUrl)) {
-        const result = await browser.navigate(explicitUrl, { signal: options.signal });
-        if (result.detail.startsWith("Navigation failed:")) {
-          evidence.push({
-            ...result,
-            detail: `Step ${step.order} navigation failed: ${result.detail}`
-          });
-          continue;
-        }
-        evidence.push({ ...result, detail: `Step ${step.order}: ${result.detail}` });
-        currentUrl = explicitUrl;
-        snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl);
-      }
-      continue;
-    }
-    const action = parseReplayAction(step.action);
-    if (!action && isLocatorAssertionStep(step.action)) {
-      const terms = assertionTextTerms(step.action);
-      const matchedElements = options.selectSnapshotTarget ? await options.selectSnapshotTarget(
-        step.action,
-        "assert-visible",
-        rankSnapshotElements(snapshot.elements, terms),
-        options.signal
-      ).then((selected) => [selected]) : snapshot.elements.filter((element) => {
-        const name = normalizeWords(element.name ?? "");
-        return name.length > 0 && terms.some((term) => name.includes(normalizeWords(term)));
-      });
-      const observed = await candidatesForStep(snapshot, step.order, step.action, currentUrl, matchedElements);
-      locatorCandidates.push(...observed);
-      evidence.push({
-        kind: "interaction",
-        detail: observed.length > 0 ? `Step ${step.order} assertion locator candidates were generated from matching visible text in the post-action snapshot.` : `Step ${step.order} assertion has no matching visible text/ref in the current snapshot; no locator was inferred.`,
-        source: browser.provenance ?? navigation.source
-      });
-    } else if (!action && isLocatorAction(step.action)) {
-      throw new Error(`Step ${step.order} could not be replayed safely: unsupported browser action "${step.action}". No later screen evidence was collected.`);
-    }
-    if (action) {
-      const compatibleTargets = findActionTargets(
-        snapshot,
-        action.target,
-        action.kind,
-        action.kind === "click" && Boolean(action.intent)
-      ).map((candidate) => candidate.element);
-      const target = options.selectSnapshotTarget ? await options.selectSnapshotTarget(step.action, action.kind, compatibleTargets, options.signal) : findActionTarget(snapshot, action.target, action.kind);
-      const candidateElements = target ? [target] : [];
-      locatorCandidates.push(...await candidatesForStep(
-        snapshot,
-        step.order,
-        step.action,
-        currentUrl,
-        candidateElements
-      ));
-      if (!target) {
-        throw new Error(`Step ${step.order} could not be replayed safely: no unique ${action.kind === "fill" ? "editable control" : "control"} matching "${action.target}" was found in the current Playwright snapshot. No later screen evidence was collected.`);
-      }
-      if (action.kind === "fill" && !action.value) {
-        throw new Error(`Step ${step.order} could not be replayed safely: no input value was found for "${action.target}".`);
-      }
-      const result = await browser.execute(
-        async (tool, callOptions) => {
-          switch (action.kind) {
-            case "fill":
-              return tool.fill(target.ref, action.value, callOptions);
-            case "check":
-              return tool.check ? tool.check(target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox check operations.` };
-            case "uncheck":
-              return tool.uncheck ? tool.uncheck(target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox uncheck operations.` };
-            default:
-              return tool.click(target.ref, callOptions);
+  try {
+    for (const step of options.steps) {
+      if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
+      const explicitUrl = extractStepUrl(step.action);
+      if (explicitUrl) {
+        if (normalizeUrl(explicitUrl) !== normalizeUrl(currentUrl)) {
+          const result = await browser.navigate(explicitUrl, { signal: options.signal });
+          if (result.detail.startsWith("Navigation failed:")) {
+            evidence.push({
+              ...result,
+              detail: `Step ${step.order} navigation failed: ${result.detail}`
+            });
+            continue;
           }
-        },
-        { signal: options.signal }
-      );
-      if (!result.ok) {
-        throw new Error(`Step ${step.order} could not be replayed safely: ${result.error ?? "browser action failed"}. No later screen evidence was collected.`);
+          evidence.push({ ...result, detail: `Step ${step.order}: ${result.detail}` });
+          currentUrl = explicitUrl;
+          snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl);
+        }
+        continue;
       }
-      evidence.push({
-        kind: "interaction",
-        detail: `Step ${step.order} replayed: ${step.action}`,
-        source: result.provenance
-      });
-      const location = await browser.execute(
-        (tool, callOptions) => tool.eval("() => window.location.href", void 0, callOptions),
-        { signal: options.signal }
-      );
-      if (location.ok && location.output) {
-        const observedUrl = extractStepUrl(location.output);
-        if (observedUrl) currentUrl = observedUrl;
+      const action = parseReplayAction(step.action);
+      if (!action && isLocatorAssertionStep(step.action)) {
+        const terms = assertionTextTerms(step.action);
+        const matchedElements = options.selectSnapshotTarget ? await options.selectSnapshotTarget(
+          step.action,
+          "assert-visible",
+          rankSnapshotElements(snapshot.elements, terms),
+          options.signal
+        ).then((selected) => [selected]) : snapshot.elements.filter((element) => {
+          const name = normalizeWords(element.name ?? "");
+          return name.length > 0 && terms.some((term) => name.includes(normalizeWords(term)));
+        });
+        const observed = await candidatesForStep(snapshot, step.order, step.action, currentUrl, matchedElements);
+        locatorCandidates.push(...observed);
+        evidence.push({
+          kind: "interaction",
+          detail: observed.length > 0 ? `Step ${step.order} assertion locator candidates were generated from matching visible text in the post-action snapshot.` : `Step ${step.order} assertion has no matching visible text/ref in the current snapshot; no locator was inferred.`,
+          source: browser.provenance ?? navigation.source
+        });
+      } else if (!action && isLocatorAction(step.action)) {
+        throw new Error(`Step ${step.order} could not be replayed safely: unsupported browser action "${step.action}". No later screen evidence was collected.`);
       }
+      if (action) {
+        const compatibleTargets = findActionTargets(
+          snapshot,
+          action.target,
+          action.kind,
+          action.kind === "click" && Boolean(action.intent)
+        ).map((candidate) => candidate.element);
+        const target = options.selectSnapshotTarget ? await options.selectSnapshotTarget(step.action, action.kind, compatibleTargets, options.signal) : findActionTarget(snapshot, action.target, action.kind);
+        const candidateElements = target ? [target] : [];
+        locatorCandidates.push(...await candidatesForStep(
+          snapshot,
+          step.order,
+          step.action,
+          currentUrl,
+          candidateElements
+        ));
+        if (!target) {
+          throw new Error(`Step ${step.order} could not be replayed safely: no unique ${action.kind === "fill" ? "editable control" : "control"} matching "${action.target}" was found in the current Playwright snapshot. No later screen evidence was collected.`);
+        }
+        if (action.kind === "fill" && !action.value) {
+          throw new Error(`Step ${step.order} could not be replayed safely: no input value was found for "${action.target}".`);
+        }
+        const result = await browser.execute(
+          async (tool, callOptions) => {
+            switch (action.kind) {
+              case "fill":
+                return tool.fill(target.ref, action.value, callOptions);
+              case "check":
+                return tool.check ? tool.check(target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox check operations.` };
+              case "uncheck":
+                return tool.uncheck ? tool.uncheck(target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox uncheck operations.` };
+              default:
+                return tool.click(target.ref, callOptions);
+            }
+          },
+          { signal: options.signal }
+        );
+        if (!result.ok) {
+          throw new Error(`Step ${step.order} could not be replayed safely: ${result.error ?? "browser action failed"}. No later screen evidence was collected.`);
+        }
+        evidence.push({
+          kind: "interaction",
+          detail: `Step ${step.order} replayed: ${step.action}`,
+          source: result.provenance
+        });
+        const location = await browser.execute(
+          (tool, callOptions) => tool.eval("() => window.location.href", void 0, callOptions),
+          { signal: options.signal }
+        );
+        if (location.ok && location.output) {
+          const observedUrl = extractStepUrl(location.output);
+          if (observedUrl) currentUrl = observedUrl;
+        }
+      }
+      snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl);
     }
-    snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl);
+  } catch (error) {
+    if (error instanceof SnapshotTargetUnavailableError && !options.fallbackRetry) {
+      if (browser.activateFallback(`Playwright CLI could not confidently map a manual step: ${error.message}`)) {
+        return gatherEvidenceForTestCase(browser, { ...options, fallbackRetry: true });
+      }
+      throw new Error(`${error.message} Playwright MCP fallback is unavailable.`);
+    }
+    throw error;
   }
   return { evidence, locatorCandidates };
   async function captureScreen(label, pageUrl) {

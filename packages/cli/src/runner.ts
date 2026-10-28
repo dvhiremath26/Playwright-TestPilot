@@ -83,6 +83,13 @@ export interface RunResult {
   browserLocatorCandidates: VerifiedLocator[]
 }
 
+class SnapshotTargetUnavailableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SnapshotTargetUnavailableError'
+  }
+}
+
 /** The stages, in execution order; later stages are separate user-approved commands. */
 const STAGE_SEQUENCE: AgentStage[] = [
   'Understand',
@@ -329,11 +336,11 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
                 })
                 const selected = parseSnapshotTargetSelection(selection.text)
                 if (!selected.ref || (selected.confidence !== undefined && (selected.confidence < 0.65 || selected.confidence > 1))) {
-                  throw new Error(`Step "${stepAction}" has no confident match in the current Playwright snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ''}`)
+                  throw new SnapshotTargetUnavailableError(`Step "${stepAction}" has no confident match in the Playwright CLI snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ''}`)
                 }
                 const match = candidates.filter((candidate) => candidate.ref === selected.ref)
                 if (match.length !== 1) {
-                  throw new Error(`The selected model returned ref "${selected.ref}", which is not a unique element in the current Playwright snapshot.`)
+                  throw new SnapshotTargetUnavailableError(`The selected model returned ref "${selected.ref}", which is not a unique element in the Playwright CLI snapshot.`)
                 }
                 return match[0]!
               }
@@ -459,6 +466,8 @@ export async function gatherEvidenceForTestCase(
       candidates: BrowserElementRef[],
       signal?: AbortSignal,
     ) => Promise<BrowserElementRef>
+    /** Internal guard so a failed MCP retry cannot recursively restart forever. */
+    fallbackRetry?: boolean
     signal?: AbortSignal
   },
 ): Promise<{ evidence: BrowserEvidence[]; locatorCandidates: VerifiedLocator[] }> {
@@ -484,6 +493,7 @@ export async function gatherEvidenceForTestCase(
     return { evidence, locatorCandidates }
   }
 
+  try {
   for (const step of options.steps) {
     if (options.signal?.aborted) throw new Error('Browser step replay was cancelled.')
 
@@ -595,6 +605,15 @@ export async function gatherEvidenceForTestCase(
     // Snapshot after every step. The next step's locator candidates therefore
     // come from the screen that is actually visible at that point in the flow.
     snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl)
+  }
+  } catch (error) {
+    if (error instanceof SnapshotTargetUnavailableError && !options.fallbackRetry) {
+      if (browser.activateFallback(`Playwright CLI could not confidently map a manual step: ${error.message}`)) {
+        return gatherEvidenceForTestCase(browser, { ...options, fallbackRetry: true })
+      }
+      throw new Error(`${error.message} Playwright MCP fallback is unavailable.`)
+    }
+    throw error
   }
 
   return { evidence, locatorCandidates }

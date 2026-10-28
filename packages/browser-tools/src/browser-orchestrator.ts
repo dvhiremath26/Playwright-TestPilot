@@ -103,6 +103,14 @@ export class BrowserSession {
     return active?.capabilities
   }
 
+  /** Switch deliberately to MCP when the primary snapshot cannot support a step match. */
+  activateFallback(reason: string): boolean {
+    if (!this.fallback?.available || this.usedFallback) return false
+    this.fallbackReason = reason
+    this.activeBackendId = 'playwright-mcp'
+    return true
+  }
+
   /**
    * Run a browser call with fallback.
    *

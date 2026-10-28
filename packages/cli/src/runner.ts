@@ -329,7 +329,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
                 })
                 const selected = parseSnapshotTargetSelection(selection.text)
                 if (!selected.ref) {
-                  throw new Error(`The selected model could not confidently map step "${stepAction}" to an element in the current Playwright snapshot${selected.reason ? `: ${selected.reason}` : '.'}`)
+                  throw new Error(`Step "${stepAction}" has no confident match in the current Playwright snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ''}`)
                 }
                 const match = candidates.filter((candidate) => candidate.ref === selected.ref)
                 if (match.length !== 1) {
@@ -453,7 +453,7 @@ export async function gatherEvidenceForTestCase(
     targetUrl: string
     steps: TestCase['steps']
     mode: 'start-page' | 'follow-steps'
-      selectSnapshotTarget?: (
+    selectSnapshotTarget?: (
       stepAction: string,
       actionKind: SnapshotSelectionAction,
       candidates: BrowserElementRef[],
@@ -532,7 +532,12 @@ export async function gatherEvidenceForTestCase(
       throw new Error(`Step ${step.order} could not be replayed safely: unsupported browser action "${step.action}". No later screen evidence was collected.`)
     }
     if (action) {
-      const compatibleTargets = findActionTargets(snapshot, action.target, action.kind)
+      const compatibleTargets = findActionTargets(
+        snapshot,
+        action.target,
+        action.kind,
+        action.kind === 'click' && Boolean(action.intent),
+      )
         .map((candidate) => candidate.element)
       const target = options.selectSnapshotTarget
         ? await options.selectSnapshotTarget(step.action, action.kind, compatibleTargets, options.signal)
@@ -639,7 +644,8 @@ export async function gatherEvidenceForTestCase(
 }
 
 type ReplayAction =
-  | { kind: 'click' | 'check' | 'uncheck'; target: string }
+  | { kind: 'click'; target: string; intent?: 'expand' | 'collapse' }
+  | { kind: 'check' | 'uncheck'; target: string }
   | { kind: 'fill'; target: string; value?: string }
 
 type SnapshotSelectionAction = ReplayAction['kind'] | 'assert-visible'
@@ -710,8 +716,9 @@ function parseReplayAction(action: string): ReplayAction | undefined {
   }
   const expand = /^(?:expand|collapse)\s+(?:the\s+)?(.+)$/i.exec(step)
   if (expand) {
-    const target = cleanActionTarget(expand[1] ?? '').replace(/^(?:(?:left|right)\s+)?(?:side\s*bar|navigation|nav(?:igation)?)(?:\s+(?:side\s*)?(?:bar|menu))?$/i, 'menu')
-    return target ? { kind: 'click', target } : undefined
+    const intent = step.toLowerCase().startsWith('collapse') ? 'collapse' : 'expand'
+    const target = cleanActionTarget(expand[1] ?? '').replace(/^(?:(?:left|right)\s+)?(?:side\s*bar|navigation|nav(?:igation)?)(?:\s+(?:side\s*)?(?:bar|menu))?$/i, 'sidebar navigation menu')
+    return target ? { kind: 'click', target, intent } : undefined
   }
   const fill = /^(?:enter|type|fill|input)\s+(?:the\s+)?(.+?)(?:\s+(?:as|with|value(?:\s+of)?|=)\s+)(.+)$/i.exec(step)
   if (fill) {
@@ -758,15 +765,17 @@ function findActionTargets(
   snapshot: NonNullable<Awaited<ReturnType<BrowserSession['capture']>>>,
   target: string,
   kind: ReplayAction['kind'],
+  includeTreeItems = false,
 ) {
   const wanted = normalizeWords(target)
   if (!wanted) return []
   const wantedTokens = new Set(wanted.split(' '))
   const ranked = snapshot.elements
-    .filter((element) => element.actionable !== false && element.name)
+    .filter((element) => element.actionable !== false && (element.name || includeTreeItems))
     .filter((element) => kind !== 'fill' || /^(?:textbox|searchbox|combobox|spinbutton)$/i.test(element.role ?? ''))
     .filter((element) => !['check', 'uncheck'].includes(kind) || /^(?:checkbox|radio)$/i.test(element.role ?? ''))
-    .filter((element) => kind !== 'click' || /^(?:button|link|menuitem|tab|checkbox|radio|option|switch)$/i.test(element.role ?? ''))
+    .filter((element) => kind !== 'click' || /^(?:button|link|menuitem|tab|checkbox|radio|option|switch)$/i.test(element.role ?? '') ||
+      (includeTreeItems && /^(?:treeitem|listitem)$/i.test(element.role ?? '')))
     .map((element) => {
       const name = normalizeWords(element.name ?? '')
       const tokens = name.split(' ').filter(Boolean)
@@ -777,7 +786,14 @@ function findActionTargets(
       return { element, score }
     })
     .sort((a, b) => b.score - a.score)
-  // Bound the prompt while preserving likely candidates; names are all drawn from the live snapshot.
+  // For menu expand/collapse, retain a few unnamed button/tree controls too:
+  // snapshots can expose the real toggle by role/ref even when its accessible name is absent.
+  if (includeTreeItems) {
+    return [
+      ...ranked.filter(({ element }) => Boolean(element.name)).slice(0, 60),
+      ...ranked.filter(({ element }) => !element.name).slice(0, 20),
+    ]
+  }
   return ranked.slice(0, 80)
 }
 

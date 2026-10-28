@@ -404,10 +404,11 @@ function extractSnapshotName(line: string): string | undefined {
 }
 
 /** Format a failure without leaking the target's raw text into logs. */
-function formatError(args: string[], out: { exitCode: number; stderr: string }): string {
-  const shown = args.slice(0, 1).map(quoteForLog).join(' ')
-  const detail = redact(out.stderr.slice(0, 600)).trim()
-  return `Playwright CLI "${shown}" failed (exit ${out.exitCode}): ${detail || 'no stderr'} `.trim()
+function formatError(args: string[], out: { exitCode: number; stdout?: string; stderr: string }): string {
+  const shown = args.slice(0, 2).map(quoteForLog).join(' ')
+  const output = [out.stderr, out.stdout].filter((part) => part?.trim()).join('\n')
+  const detail = redact(output.slice(-1000)).trim()
+  return `Playwright CLI "${shown}" failed (exit ${out.exitCode}): ${detail || 'no diagnostic output'}`
 }
 
 interface RunChildResult {

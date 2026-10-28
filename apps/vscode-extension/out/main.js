@@ -286085,9 +286085,10 @@ function extractSnapshotName(line) {
   return value || void 0;
 }
 function formatError(args, out) {
-  const shown = args.slice(0, 1).map(quoteForLog).join(" ");
-  const detail = redact3(out.stderr.slice(0, 600)).trim();
-  return `Playwright CLI "${shown}" failed (exit ${out.exitCode}): ${detail || "no stderr"} `.trim();
+  const shown = args.slice(0, 2).map(quoteForLog).join(" ");
+  const output = [out.stderr, out.stdout].filter((part) => part?.trim()).join("\n");
+  const detail = redact3(output.slice(-1e3)).trim();
+  return `Playwright CLI "${shown}" failed (exit ${out.exitCode}): ${detail || "no diagnostic output"}`;
 }
 function runChild(command, args, opts) {
   return new Promise((resolve5, reject) => {
@@ -286822,7 +286823,7 @@ async function runAgent(options) {
             });
             const selected = parseSnapshotTargetSelection(selection.text);
             if (!selected.ref) {
-              throw new Error(`The selected model could not confidently map step "${stepAction}" to an element in the current Playwright snapshot${selected.reason ? `: ${selected.reason}` : "."}`);
+              throw new Error(`Step "${stepAction}" has no confident match in the current Playwright snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ""}`);
             }
             const match = candidates.filter((candidate) => candidate.ref === selected.ref);
             if (match.length !== 1) {
@@ -286983,7 +286984,12 @@ async function gatherEvidenceForTestCase(browser, options) {
       throw new Error(`Step ${step.order} could not be replayed safely: unsupported browser action "${step.action}". No later screen evidence was collected.`);
     }
     if (action) {
-      const compatibleTargets = findActionTargets(snapshot, action.target, action.kind).map((candidate) => candidate.element);
+      const compatibleTargets = findActionTargets(
+        snapshot,
+        action.target,
+        action.kind,
+        action.kind === "click" && Boolean(action.intent)
+      ).map((candidate) => candidate.element);
       const target = options.selectSnapshotTarget ? await options.selectSnapshotTarget(step.action, action.kind, compatibleTargets, options.signal) : findActionTarget(snapshot, action.target, action.kind);
       const candidateElements = target ? [target] : [];
       locatorCandidates.push(...await candidatesForStep(
@@ -287125,8 +287131,9 @@ function parseReplayAction(action) {
   }
   const expand = /^(?:expand|collapse)\s+(?:the\s+)?(.+)$/i.exec(step);
   if (expand) {
-    const target = cleanActionTarget(expand[1] ?? "").replace(/^(?:(?:left|right)\s+)?(?:side\s*bar|navigation|nav(?:igation)?)(?:\s+(?:side\s*)?(?:bar|menu))?$/i, "menu");
-    return target ? { kind: "click", target } : void 0;
+    const intent = step.toLowerCase().startsWith("collapse") ? "collapse" : "expand";
+    const target = cleanActionTarget(expand[1] ?? "").replace(/^(?:(?:left|right)\s+)?(?:side\s*bar|navigation|nav(?:igation)?)(?:\s+(?:side\s*)?(?:bar|menu))?$/i, "sidebar navigation menu");
+    return target ? { kind: "click", target, intent } : void 0;
   }
   const fill = /^(?:enter|type|fill|input)\s+(?:the\s+)?(.+?)(?:\s+(?:as|with|value(?:\s+of)?|=)\s+)(.+)$/i.exec(step);
   if (fill) {
@@ -287156,17 +287163,23 @@ function findActionTarget(snapshot, target, kind) {
   if (ranked[1] && ranked[0].score - ranked[1].score < 0.05) return void 0;
   return ranked[0].element;
 }
-function findActionTargets(snapshot, target, kind) {
+function findActionTargets(snapshot, target, kind, includeTreeItems = false) {
   const wanted = normalizeWords(target);
   if (!wanted) return [];
   const wantedTokens = new Set(wanted.split(" "));
-  const ranked = snapshot.elements.filter((element) => element.actionable !== false && element.name).filter((element) => kind !== "fill" || /^(?:textbox|searchbox|combobox|spinbutton)$/i.test(element.role ?? "")).filter((element) => !["check", "uncheck"].includes(kind) || /^(?:checkbox|radio)$/i.test(element.role ?? "")).filter((element) => kind !== "click" || /^(?:button|link|menuitem|tab|checkbox|radio|option|switch)$/i.test(element.role ?? "")).map((element) => {
+  const ranked = snapshot.elements.filter((element) => element.actionable !== false && (element.name || includeTreeItems)).filter((element) => kind !== "fill" || /^(?:textbox|searchbox|combobox|spinbutton)$/i.test(element.role ?? "")).filter((element) => !["check", "uncheck"].includes(kind) || /^(?:checkbox|radio)$/i.test(element.role ?? "")).filter((element) => kind !== "click" || /^(?:button|link|menuitem|tab|checkbox|radio|option|switch)$/i.test(element.role ?? "") || includeTreeItems && /^(?:treeitem|listitem)$/i.test(element.role ?? "")).map((element) => {
     const name = normalizeWords(element.name ?? "");
     const tokens = name.split(" ").filter(Boolean);
     const overlap = tokens.filter((token) => wantedTokens.has(token)).length;
     const score = name === wanted ? 1 : name.includes(wanted) || wanted.includes(name) ? 0.9 : overlap / Math.max(wantedTokens.size, tokens.length, 1);
     return { element, score };
   }).sort((a, b) => b.score - a.score);
+  if (includeTreeItems) {
+    return [
+      ...ranked.filter(({ element }) => Boolean(element.name)).slice(0, 60),
+      ...ranked.filter(({ element }) => !element.name).slice(0, 20)
+    ];
+  }
   return ranked.slice(0, 80);
 }
 function rankSnapshotElements(elements, terms) {

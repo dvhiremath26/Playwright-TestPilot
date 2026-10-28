@@ -107,6 +107,12 @@ export interface BrowserTool {
   /** Fill an editable element, replacing its contents. */
   fill(target: string, text: string, options?: BrowserCallOptions): Promise<BrowserActionResult>
 
+  /** Check a checkbox or radio using the backend's idempotent check operation. */
+  check?(target: string, options?: BrowserCallOptions): Promise<BrowserActionResult>
+
+  /** Uncheck a checkbox using the backend's idempotent uncheck operation. */
+  uncheck?(target: string, options?: BrowserCallOptions): Promise<BrowserActionResult>
+
   /** Evaluate a JavaScript expression on the page or an element. Evidence-gathering only. */
   eval(expression: string, target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult>
 

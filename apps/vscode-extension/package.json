@@ -2,7 +2,7 @@
   "name": "tcoe-testpilot",
   "displayName": "TCOE TestPilot",
   "description": "Turn manual UI test cases into framework-conformant Playwright tests for any web application. Uses GitHub Copilot via VS Code; runs everything locally.",
-  "version": "0.1.41",
+  "version": "0.1.43",
   "publisher": "tcoe",
   "license": "ISC",
   "repository": {

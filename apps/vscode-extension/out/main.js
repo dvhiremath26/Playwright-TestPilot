@@ -285961,6 +285961,12 @@ var PlaywrightCliAdapter = class {
   async fill(target, text, options) {
     return this.run(["fill", target, text], options);
   }
+  async check(target, options) {
+    return this.run(["check", target], options);
+  }
+  async uncheck(target, options) {
+    return this.run(["uncheck", target], options);
+  }
   async eval(expression, target, options) {
     return this.run(["eval", expression, ...target === void 0 ? [] : [target]], options);
   }
@@ -286204,6 +286210,12 @@ var PlaywrightMcpAdapter = class {
     const selected = await this.call("browser_press_key", { key: "Control+A" }, options);
     if (!selected.ok) return selected;
     return this.call("browser_type", { target, text, submit: false }, options);
+  }
+  async check(_target, _options) {
+    return { ok: false, error: "Playwright MCP does not expose a safe idempotent checkbox check operation." };
+  }
+  async uncheck(_target, _options) {
+    return { ok: false, error: "Playwright MCP does not expose a safe idempotent checkbox uncheck operation." };
   }
   async eval(expression, target, options) {
     return this.call("browser_evaluate", { function: expression, target }, options);
@@ -286755,6 +286767,20 @@ async function runAgent(options) {
     "Decide",
     `Mapped ${plan.length} step(s) to framework symbols. ${plan.filter((p) => p.resolution === "unresolved").length} step(s) are unresolved.`
   );
+  const config = buildConfig(options.config ?? {}, options.repositoryRoot);
+  const provider = getProvider(config, { vscodeLmBridge: options.vscodeLmBridge });
+  const providerInfo = await provider.check();
+  if (!providerInfo.available) {
+    task.status = "Failed";
+    task.error = {
+      message: `Model provider "${providerInfo.id}" is unavailable: ${providerInfo.unavailableReason ?? "unknown reason"}`,
+      stage: "Plan"
+    };
+    tracker.fail("Plan", task.error.message);
+    throw new Error(task.error.message);
+  }
+  const model = await provider.selectDefault();
+  const modelId = options.config?.model ?? model?.id;
   let evidence = [];
   let browserLocatorCandidates = [];
   if (options.browser && options.targetUrl) {
@@ -286767,6 +286793,43 @@ async function runAgent(options) {
           targetUrl: caseTargetUrl,
           steps: testCaseToInspect.steps,
           mode: options.browseMode ?? "start-page",
+          selectSnapshotTarget: providerInfo.liveService ? async (stepAction, actionKind, candidates, signal) => {
+            const messages = [
+              {
+                role: "system",
+                content: 'Select the single snapshot element that best matches the manual browser step and requested action. Choose only a ref from the supplied candidates. Never invent a ref or locator. If the candidates do not clearly identify the intended element, abstain. Return only JSON: {"ref":"exact-ref"} or {"ref":null,"reason":"short reason"}.'
+              },
+              {
+                role: "user",
+                content: JSON.stringify({
+                  manualStep: stepAction,
+                  requiredAction: actionKind,
+                  observedSnapshotElements: candidates.map(({ ref, role, name }) => ({ ref, role, name }))
+                })
+              }
+            ];
+            const selection = await provider.chat(messages, {
+              purpose: "locator-selection",
+              modelId,
+              signal,
+              maxTokens: 120
+            });
+            task.modelCalls.push({
+              provider: providerInfo.id,
+              model: selection.modelId,
+              at: nowIso(),
+              purpose: "locator-selection"
+            });
+            const selected = parseSnapshotTargetSelection(selection.text);
+            if (!selected.ref) {
+              throw new Error(`The selected model could not confidently map step "${stepAction}" to an element in the current Playwright snapshot${selected.reason ? `: ${selected.reason}` : "."}`);
+            }
+            const match = candidates.filter((candidate) => candidate.ref === selected.ref);
+            if (match.length !== 1) {
+              throw new Error(`The selected model returned ref "${selected.ref}", which is not a unique element in the current Playwright snapshot.`);
+            }
+            return match[0];
+          } : void 0,
           signal: options.signal
         });
         evidence.push(...observed.evidence.map((item) => ({
@@ -286797,20 +286860,6 @@ ${item.detail}`
     );
   }
   tracker.begin("Plan");
-  const config = buildConfig(options.config ?? {}, options.repositoryRoot);
-  const provider = getProvider(config, { vscodeLmBridge: options.vscodeLmBridge });
-  const providerInfo = await provider.check();
-  if (!providerInfo.available) {
-    task.status = "Failed";
-    task.error = {
-      message: `Model provider "${providerInfo.id}" is unavailable: ${providerInfo.unavailableReason ?? "unknown reason"}`,
-      stage: "Plan"
-    };
-    tracker.fail("Plan", task.error.message);
-    throw new Error(task.error.message);
-  }
-  const model = await provider.selectDefault();
-  const modelId = options.config?.model ?? model?.id;
   const { buildSystemPrompt: buildSystemPrompt2, buildPlanUserPrompt: buildPlanUserPrompt2 } = await Promise.resolve().then(() => (init_src2(), src_exports));
   const promptMessages = [
     { role: "system", content: buildSystemPrompt2() },
@@ -286914,7 +286963,12 @@ async function gatherEvidenceForTestCase(browser, options) {
     const action = parseReplayAction(step.action);
     if (!action && isLocatorAssertionStep(step.action)) {
       const terms = assertionTextTerms(step.action);
-      const matchedElements = snapshot.elements.filter((element) => {
+      const matchedElements = options.selectSnapshotTarget ? await options.selectSnapshotTarget(
+        step.action,
+        "assert-visible",
+        rankSnapshotElements(snapshot.elements, terms),
+        options.signal
+      ).then((selected) => [selected]) : snapshot.elements.filter((element) => {
         const name = normalizeWords(element.name ?? "");
         return name.length > 0 && terms.some((term) => name.includes(normalizeWords(term)));
       });
@@ -286926,15 +286980,11 @@ async function gatherEvidenceForTestCase(browser, options) {
         source: browser.provenance ?? navigation.source
       });
     } else if (!action && isLocatorAction(step.action)) {
-      locatorCandidates.push(...await candidatesForStep(snapshot, step.order, step.action, currentUrl));
-      evidence.push({
-        kind: "interaction",
-        detail: `Step ${step.order} was not automatically replayed because its action is not supported by the safe step interpreter. Locator candidates are from the screen visible at this step.`,
-        source: browser.provenance ?? navigation.source
-      });
+      throw new Error(`Step ${step.order} could not be replayed safely: unsupported browser action "${step.action}". No later screen evidence was collected.`);
     }
     if (action) {
-      const target = findActionTarget(snapshot, action.target, action.kind);
+      const compatibleTargets = findActionTargets(snapshot, action.target, action.kind).map((candidate) => candidate.element);
+      const target = options.selectSnapshotTarget ? await options.selectSnapshotTarget(step.action, action.kind, compatibleTargets, options.signal) : findActionTarget(snapshot, action.target, action.kind);
       const candidateElements = target ? [target] : [];
       locatorCandidates.push(...await candidatesForStep(
         snapshot,
@@ -286943,32 +286993,42 @@ async function gatherEvidenceForTestCase(browser, options) {
         currentUrl,
         candidateElements
       ));
-      if (!target || action.kind === "fill" && !action.value) {
-        evidence.push({
-          kind: "interaction",
-          detail: `Step ${step.order} was not replayed: ${!target ? "no unique matching control was found on the observed screen" : "no input value was stated"}. The screen locator candidates are available for review.`,
-          source: browser.provenance ?? navigation.source
-        });
-      } else {
-        const result = await browser.execute(
-          (tool, callOptions) => action.kind === "fill" ? tool.fill(target.ref, action.value, callOptions) : tool.click(target.ref, callOptions),
-          { signal: options.signal }
-        );
-        evidence.push({
-          kind: "interaction",
-          detail: result.ok ? `Step ${step.order} replayed: ${step.action}` : `Step ${step.order} could not be replayed: ${result.error ?? "browser action failed"}`,
-          source: result.provenance
-        });
-        if (result.ok) {
-          const location = await browser.execute(
-            (tool, callOptions) => tool.eval("() => window.location.href", void 0, callOptions),
-            { signal: options.signal }
-          );
-          if (location.ok && location.output) {
-            const observedUrl = extractStepUrl(location.output);
-            if (observedUrl) currentUrl = observedUrl;
+      if (!target) {
+        throw new Error(`Step ${step.order} could not be replayed safely: no unique ${action.kind === "fill" ? "editable control" : "control"} matching "${action.target}" was found in the current Playwright snapshot. No later screen evidence was collected.`);
+      }
+      if (action.kind === "fill" && !action.value) {
+        throw new Error(`Step ${step.order} could not be replayed safely: no input value was found for "${action.target}".`);
+      }
+      const result = await browser.execute(
+        async (tool, callOptions) => {
+          switch (action.kind) {
+            case "fill":
+              return tool.fill(target.ref, action.value, callOptions);
+            case "check":
+              return tool.check ? tool.check(target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox check operations.` };
+            case "uncheck":
+              return tool.uncheck ? tool.uncheck(target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox uncheck operations.` };
+            default:
+              return tool.click(target.ref, callOptions);
           }
-        }
+        },
+        { signal: options.signal }
+      );
+      if (!result.ok) {
+        throw new Error(`Step ${step.order} could not be replayed safely: ${result.error ?? "browser action failed"}. No later screen evidence was collected.`);
+      }
+      evidence.push({
+        kind: "interaction",
+        detail: `Step ${step.order} replayed: ${step.action}`,
+        source: result.provenance
+      });
+      const location = await browser.execute(
+        (tool, callOptions) => tool.eval("() => window.location.href", void 0, callOptions),
+        { signal: options.signal }
+      );
+      if (location.ok && location.output) {
+        const observedUrl = extractStepUrl(location.output);
+        if (observedUrl) currentUrl = observedUrl;
       }
     }
     snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl);
@@ -287009,6 +287069,28 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
     return candidates;
   }
 }
+function parseSnapshotTargetSelection(text) {
+  const normalized = text.trim().replace(/^```(?:json)?\s*|\s*```$/gi, "").trim();
+  const start = normalized.indexOf("{");
+  const end = normalized.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("The selected model returned an invalid snapshot element selection; expected a JSON object with a ref.");
+  let parsed;
+  try {
+    parsed = JSON.parse(normalized.slice(start, end + 1));
+  } catch {
+    throw new Error("The selected model returned invalid JSON for its snapshot element selection.");
+  }
+  if (!parsed || typeof parsed !== "object" || !("ref" in parsed)) {
+    throw new Error("The selected model returned no ref for its snapshot element selection.");
+  }
+  const ref = parsed.ref;
+  const reason = parsed.reason;
+  if (ref === null) return { reason: typeof reason === "string" ? reason : void 0 };
+  if (typeof ref !== "string" || !ref.trim()) {
+    throw new Error("The selected model returned an invalid ref for its snapshot element selection.");
+  }
+  return { ref: ref.trim() };
+}
 function isLocatorAction(action) {
   return /^\s*(?:\d+[.)]\s*)?(?:click|tap|enter|type|fill|input|select|choose|check|uncheck|hover)\b/i.test(action);
 }
@@ -287016,7 +287098,11 @@ function isLocatorAssertionStep(action) {
   return /^\s*(?:\d+[.)]\s*)?(?:validate|verify|assert|expect|check)\b/i.test(action);
 }
 function assertionTextTerms(action) {
-  return [...action.matchAll(/["']([^"']{2,})["']/g)].map((match) => match[1].trim()).filter(Boolean);
+  const quoted = [...action.matchAll(/["']([^"']{2,})["']/g)].map((match) => match[1].trim()).filter(Boolean);
+  if (quoted.length > 0) return quoted;
+  const visibleText = /^(?:validate|verify|assert|expect|check)\s+(?:that\s+)?(.+?)\s+(?:text\s+)?(?:is|should\s+be)\s+(?:visible|displayed|shown)\.?$/i.exec(action.trim());
+  const term = visibleText?.[1]?.replace(/^["'`]|["'`.,]$/g, "").replace(/\b(?:the|a|an)\b/gi, " ").replace(/\s+/g, " ").trim();
+  return term ? [term] : [];
 }
 function extractStepUrl(action) {
   return action.match(/https?:\/\/[^\s<>"')\]]+/i)?.[0]?.replace(/[.,;]+$/, "");
@@ -287030,6 +287116,18 @@ function normalizeUrl(url) {
 }
 function parseReplayAction(action) {
   const step = action.replace(/^\s*\d+[.)]\s*/, "").trim();
+  const toggle = /^(check|uncheck)\s+(?:the\s+)?(.+)$/i.exec(step);
+  if (toggle) {
+    return {
+      kind: toggle[1].toLowerCase(),
+      target: cleanActionTarget(toggle[2] ?? "")
+    };
+  }
+  const expand = /^(?:expand|collapse)\s+(?:the\s+)?(.+)$/i.exec(step);
+  if (expand) {
+    const target = cleanActionTarget(expand[1] ?? "").replace(/^(?:(?:left|right)\s+)?(?:side\s*bar|navigation|nav(?:igation)?)(?:\s+(?:side\s*)?(?:bar|menu))?$/i, "menu");
+    return target ? { kind: "click", target } : void 0;
+  }
   const fill = /^(?:enter|type|fill|input)\s+(?:the\s+)?(.+?)(?:\s+(?:as|with|value(?:\s+of)?|=)\s+)(.+)$/i.exec(step);
   if (fill) {
     return { kind: "fill", target: cleanActionTarget(fill[1] ?? ""), value: stripWrappingQuotes(fill[2] ?? "") };
@@ -287047,25 +287145,40 @@ function parseReplayAction(action) {
   return void 0;
 }
 function cleanActionTarget(value) {
-  return value.replace(/\s+(?:in|from)\s+(?:the\s+)?(?:left\s+|right\s+)?(?:side\s*bar|navigation(?:\s+bar)?|nav(?:\s+bar)?|menu|tab|link)\b.*$/i, "").replace(/^[\s"'`]+|[\s"'`.,]+$/g, "").replace(/\s+(?:button|link|tab|menu\s*item|field|textbox|input)$/i, "").replace(/^the\s+/i, "").trim();
+  return value.replace(/\s+(?:in|from)\s+(?:the\s+)?(?:left\s+|right\s+)?(?:side\s*bar|navigation(?:\s+bar)?|nav(?:\s+bar)?|menu|tab|link)\b.*$/i, "").replace(/^[\s"'`]+|[\s"'`.,]+$/g, "").replace(/\s+(?:button|link|tab|menu\s*item|checkbox|radio\s*button|field|textbox|input|icon)$/i, "").replace(/^the\s+/i, "").trim();
 }
 function stripWrappingQuotes(value) {
   return value.trim().replace(/^["'`]|["'`]$/g, "");
 }
 function findActionTarget(snapshot, target, kind) {
+  const ranked = findActionTargets(snapshot, target, kind);
+  if (!ranked[0] || ranked[0].score < 0.75) return void 0;
+  if (ranked[1] && ranked[0].score - ranked[1].score < 0.05) return void 0;
+  return ranked[0].element;
+}
+function findActionTargets(snapshot, target, kind) {
   const wanted = normalizeWords(target);
-  if (!wanted) return void 0;
+  if (!wanted) return [];
   const wantedTokens = new Set(wanted.split(" "));
-  const ranked = snapshot.elements.filter((element) => element.actionable !== false && element.name).filter((element) => kind !== "fill" || /^(?:textbox|searchbox|combobox|spinbutton)$/i.test(element.role ?? "")).filter((element) => kind !== "click" || /^(?:button|link|menuitem|tab|checkbox|radio|option|switch)$/i.test(element.role ?? "")).map((element) => {
+  const ranked = snapshot.elements.filter((element) => element.actionable !== false && element.name).filter((element) => kind !== "fill" || /^(?:textbox|searchbox|combobox|spinbutton)$/i.test(element.role ?? "")).filter((element) => !["check", "uncheck"].includes(kind) || /^(?:checkbox|radio)$/i.test(element.role ?? "")).filter((element) => kind !== "click" || /^(?:button|link|menuitem|tab|checkbox|radio|option|switch)$/i.test(element.role ?? "")).map((element) => {
     const name = normalizeWords(element.name ?? "");
     const tokens = name.split(" ").filter(Boolean);
     const overlap = tokens.filter((token) => wantedTokens.has(token)).length;
     const score = name === wanted ? 1 : name.includes(wanted) || wanted.includes(name) ? 0.9 : overlap / Math.max(wantedTokens.size, tokens.length, 1);
     return { element, score };
-  }).filter((item) => item.score >= 0.75).sort((a, b) => b.score - a.score);
-  if (!ranked[0]) return void 0;
-  if (ranked[1] && ranked[0].score - ranked[1].score < 0.05) return void 0;
-  return ranked[0].element;
+  }).sort((a, b) => b.score - a.score);
+  return ranked.slice(0, 80);
+}
+function rankSnapshotElements(elements, terms) {
+  const wanted = terms.map(normalizeWords).filter(Boolean).join(" ");
+  const wantedTokens = new Set(wanted.split(" ").filter(Boolean));
+  return elements.filter((element) => element.name).map((element) => {
+    const name = normalizeWords(element.name ?? "");
+    const tokens = name.split(" ").filter(Boolean);
+    const overlap = tokens.filter((token) => wantedTokens.has(token)).length;
+    const score = name === wanted ? 1 : name.includes(wanted) || wanted.includes(name) ? 0.9 : overlap / Math.max(wantedTokens.size, tokens.length, 1);
+    return { element, score };
+  }).sort((a, b) => b.score - a.score).slice(0, 80).map(({ element }) => element);
 }
 function normalizeWords(value) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\b(?:please|your|the|a|an)\b/g, " ").trim().replace(/\s+/g, " ");

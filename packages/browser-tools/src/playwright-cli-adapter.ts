@@ -249,6 +249,14 @@ export class PlaywrightCliAdapter implements BrowserTool {
     return this.run(['fill', target, text], options)
   }
 
+  async check(target: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    return this.run(['check', target], options)
+  }
+
+  async uncheck(target: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    return this.run(['uncheck', target], options)
+  }
+
   async eval(expression: string, target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
     // `eval <func> [target]` — target is optional and positional, per the CLI help.
     return this.run(['eval', expression, ...(target === undefined ? [] : [target])], options)

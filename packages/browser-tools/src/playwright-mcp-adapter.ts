@@ -145,6 +145,14 @@ export class PlaywrightMcpAdapter implements BrowserTool {
     return this.call('browser_type', { target, text, submit: false }, options)
   }
 
+  async check(_target: string, _options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    return { ok: false, error: 'Playwright MCP does not expose a safe idempotent checkbox check operation.' }
+  }
+
+  async uncheck(_target: string, _options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    return { ok: false, error: 'Playwright MCP does not expose a safe idempotent checkbox uncheck operation.' }
+  }
+
   async eval(expression: string, target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
     return this.call('browser_evaluate', { function: expression, target }, options)
   }

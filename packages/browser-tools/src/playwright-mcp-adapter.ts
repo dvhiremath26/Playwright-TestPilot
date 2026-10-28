@@ -203,7 +203,6 @@ export class PlaywrightMcpAdapter implements BrowserTool {
 
       // Accept the CLI/MCP snapshot ref format or a bare quoted uid.
     const refRe = /\[ref=([A-Za-z0-9_-]+)\]|\["(e[A-Za-z0-9_-]+)"\]/
-    const roleRe = /^\s*[-*]?\s*([a-z][a-z0-9-]*)\s+/i
 
     for (const line of raw.split(/\r?\n/)) {
       const m = refRe.exec(line)
@@ -212,17 +211,26 @@ export class PlaywrightMcpAdapter implements BrowserTool {
       if (!ref || seen.has(ref)) continue
       seen.add(ref)
 
-      const roleMatch = roleRe.exec(line)
-      const nameMatch = /"([^"]+)"/.exec(line)
+      // MCP snapshots may render names as `button "Save"` or as unquoted
+      // text nodes like `text: Sourcing`. Preserve both so navigation labels
+      // remain available to the step matcher.
+      const withoutRef = line.replace(refRe, '').trim().replace(/^[-*]\s*/, '')
+      const roleMatch = /^([a-z][a-z0-9-]*)\b/i.exec(withoutRef)
+      const quotedName = /"([^"]+)"/.exec(withoutRef)?.[1]
+      const plainName = roleMatch
+        ? withoutRef.slice(roleMatch[0].length).trim().replace(/^:\s*/, '').trim()
+        : withoutRef
+      const name = quotedName || plainName || undefined
+      const role = roleMatch?.[1]
       elements.push({
         ref,
-        role: roleMatch?.[1] ?? undefined,
-        name: nameMatch?.[1] ?? undefined,
+        role,
+        name,
         actionable: true,
       })
-      const description = [roleMatch?.[1], nameMatch?.[1]].filter(Boolean).join(' ')
+      const description = [role, name].filter(Boolean).join(' ')
       if (description) this.elementDescriptions.set(ref, description)
-      this.snapshotElements.set(ref, { role: roleMatch?.[1], name: nameMatch?.[1] })
+      this.snapshotElements.set(ref, { role, name })
     }
 
     return { raw, elements, capturedAt: new Date().toISOString() }

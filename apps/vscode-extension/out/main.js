@@ -286256,24 +286256,27 @@ var PlaywrightMcpAdapter = class {
     this.elementDescriptions.clear();
     this.snapshotElements.clear();
     const refRe = /\[ref=([A-Za-z0-9_-]+)\]|\["(e[A-Za-z0-9_-]+)"\]/;
-    const roleRe = /^\s*[-*]?\s*([a-z][a-z0-9-]*)\s+/i;
     for (const line of raw.split(/\r?\n/)) {
       const m = refRe.exec(line);
       if (!m) continue;
       const ref = m[1] ?? m[2];
       if (!ref || seen.has(ref)) continue;
       seen.add(ref);
-      const roleMatch = roleRe.exec(line);
-      const nameMatch = /"([^"]+)"/.exec(line);
+      const withoutRef = line.replace(refRe, "").trim().replace(/^[-*]\s*/, "");
+      const roleMatch = /^([a-z][a-z0-9-]*)\b/i.exec(withoutRef);
+      const quotedName = /"([^"]+)"/.exec(withoutRef)?.[1];
+      const plainName = roleMatch ? withoutRef.slice(roleMatch[0].length).trim().replace(/^:\s*/, "").trim() : withoutRef;
+      const name = quotedName || plainName || void 0;
+      const role = roleMatch?.[1];
       elements.push({
         ref,
-        role: roleMatch?.[1] ?? void 0,
-        name: nameMatch?.[1] ?? void 0,
+        role,
+        name,
         actionable: true
       });
-      const description = [roleMatch?.[1], nameMatch?.[1]].filter(Boolean).join(" ");
+      const description = [role, name].filter(Boolean).join(" ");
       if (description) this.elementDescriptions.set(ref, description);
-      this.snapshotElements.set(ref, { role: roleMatch?.[1], name: nameMatch?.[1] });
+      this.snapshotElements.set(ref, { role, name });
     }
     return { raw, elements, capturedAt: (/* @__PURE__ */ new Date()).toISOString() };
   }
@@ -286836,11 +286839,13 @@ async function runAgent(options) {
             });
             const selected = parseSnapshotTargetSelection(selection.text);
             if (!selected.ref || selected.confidence !== void 0 && (selected.confidence < 0.65 || selected.confidence > 1)) {
-              throw new SnapshotTargetUnavailableError(`Step "${stepAction}" has no confident match in the Playwright CLI snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ""}`);
+              const backend2 = options.browser?.provenance?.backendLabel ?? "browser";
+              throw new SnapshotTargetUnavailableError(`Step "${stepAction}" has no confident match in the ${backend2} snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ""}`);
             }
             const match = candidates.filter((candidate) => candidate.ref === selected.ref);
             if (match.length !== 1) {
-              throw new SnapshotTargetUnavailableError(`The selected model returned ref "${selected.ref}", which is not a unique element in the Playwright CLI snapshot.`);
+              const backend2 = options.browser?.provenance?.backendLabel ?? "browser";
+              throw new SnapshotTargetUnavailableError(`The selected model returned ref "${selected.ref}", which is not a unique element in the ${backend2} snapshot.`);
             }
             return match[0];
           } : void 0,
@@ -286998,12 +287003,27 @@ async function gatherEvidenceForTestCase(browser, options) {
         throw new Error(`Step ${step.order} could not be replayed safely: unsupported browser action "${step.action}". No later screen evidence was collected.`);
       }
       if (action) {
-        const compatibleTargets = findActionTargets(
+        let compatibleTargets = findActionTargets(
           snapshot,
           action.target,
           action.kind,
           action.kind === "click" && Boolean(action.intent)
         ).map((candidate) => candidate.element);
+        if (compatibleTargets.length === 0) {
+          for (let retry = 0; retry < 6 && compatibleTargets.length === 0; retry++) {
+            if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
+            await new Promise((resolve5) => setTimeout(resolve5, 400));
+            const refreshed = await browser.capture(void 0, { signal: options.signal });
+            if (!refreshed) continue;
+            snapshot = refreshed;
+            compatibleTargets = findActionTargets(
+              snapshot,
+              action.target,
+              action.kind,
+              action.kind === "click" && Boolean(action.intent)
+            ).map((candidate) => candidate.element);
+          }
+        }
         const target = options.selectSnapshotTarget ? await options.selectSnapshotTarget(step.action, action.kind, compatibleTargets, options.signal) : findActionTarget(snapshot, action.target, action.kind);
         const candidateElements = target ? [target] : [];
         locatorCandidates.push(...await candidatesForStep(
@@ -287198,7 +287218,7 @@ function findActionTargets(snapshot, target, kind, includeTreeItems = false) {
   const wanted = normalizeWords(target);
   if (!wanted) return [];
   const wantedTokens = new Set(wanted.split(" "));
-  const ranked = snapshot.elements.filter((element) => element.actionable !== false && (element.name || includeTreeItems)).filter((element) => kind !== "fill" || /^(?:textbox|searchbox|combobox|spinbutton)$/i.test(element.role ?? "")).filter((element) => !["check", "uncheck"].includes(kind) || /^(?:checkbox|radio)$/i.test(element.role ?? "")).filter((element) => kind !== "click" || /^(?:button|link|menuitem|tab|checkbox|radio|option|switch)$/i.test(element.role ?? "") || includeTreeItems && /^(?:treeitem|listitem)$/i.test(element.role ?? "")).map((element) => {
+  const ranked = snapshot.elements.filter((element) => element.actionable !== false && (element.name || includeTreeItems)).filter((element) => kind !== "fill" || /^(?:textbox|searchbox|combobox|spinbutton)$/i.test(element.role ?? "")).filter((element) => !["check", "uncheck"].includes(kind) || /^(?:checkbox|radio)$/i.test(element.role ?? "")).filter((element) => kind !== "click" || /^(?:button|link|menuitem|tab|checkbox|radio|option|switch|treeitem|listitem|text|generic)$/i.test(element.role ?? "")).map((element) => {
     const name = normalizeWords(element.name ?? "");
     const tokens = name.split(" ").filter(Boolean);
     const overlap = tokens.filter((token) => wantedTokens.has(token)).length;

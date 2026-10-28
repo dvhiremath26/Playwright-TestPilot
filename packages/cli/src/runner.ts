@@ -336,11 +336,13 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
                 })
                 const selected = parseSnapshotTargetSelection(selection.text)
                 if (!selected.ref || (selected.confidence !== undefined && (selected.confidence < 0.65 || selected.confidence > 1))) {
-                  throw new SnapshotTargetUnavailableError(`Step "${stepAction}" has no confident match in the Playwright CLI snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ''}`)
+                  const backend = options.browser?.provenance?.backendLabel ?? 'browser'
+                  throw new SnapshotTargetUnavailableError(`Step "${stepAction}" has no confident match in the ${backend} snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ''}`)
                 }
                 const match = candidates.filter((candidate) => candidate.ref === selected.ref)
                 if (match.length !== 1) {
-                  throw new SnapshotTargetUnavailableError(`The selected model returned ref "${selected.ref}", which is not a unique element in the Playwright CLI snapshot.`)
+                  const backend = options.browser?.provenance?.backendLabel ?? 'browser'
+                  throw new SnapshotTargetUnavailableError(`The selected model returned ref "${selected.ref}", which is not a unique element in the ${backend} snapshot.`)
                 }
                 return match[0]!
               }
@@ -542,13 +544,32 @@ export async function gatherEvidenceForTestCase(
       throw new Error(`Step ${step.order} could not be replayed safely: unsupported browser action "${step.action}". No later screen evidence was collected.`)
     }
     if (action) {
-      const compatibleTargets = findActionTargets(
+      let compatibleTargets = findActionTargets(
         snapshot,
         action.target,
         action.kind,
         action.kind === 'click' && Boolean(action.intent),
       )
         .map((candidate) => candidate.element)
+      // Enterprise apps often finish an SSO redirect or client-side menu render
+      // shortly after the click command returns. Give the current page a brief,
+      // bounded chance to expose the next screen before declaring that its
+      // snapshot has no usable candidates and switching to MCP.
+      if (compatibleTargets.length === 0) {
+        for (let retry = 0; retry < 6 && compatibleTargets.length === 0; retry++) {
+          if (options.signal?.aborted) throw new Error('Browser step replay was cancelled.')
+          await new Promise((resolve) => setTimeout(resolve, 400))
+          const refreshed = await browser.capture(undefined, { signal: options.signal })
+          if (!refreshed) continue
+          snapshot = refreshed
+          compatibleTargets = findActionTargets(
+            snapshot,
+            action.target,
+            action.kind,
+            action.kind === 'click' && Boolean(action.intent),
+          ).map((candidate) => candidate.element)
+        }
+      }
       const target = options.selectSnapshotTarget
         ? await options.selectSnapshotTarget(step.action, action.kind, compatibleTargets, options.signal)
         : findActionTarget(snapshot, action.target, action.kind)
@@ -801,8 +822,7 @@ function findActionTargets(
     .filter((element) => element.actionable !== false && (element.name || includeTreeItems))
     .filter((element) => kind !== 'fill' || /^(?:textbox|searchbox|combobox|spinbutton)$/i.test(element.role ?? ''))
     .filter((element) => !['check', 'uncheck'].includes(kind) || /^(?:checkbox|radio)$/i.test(element.role ?? ''))
-    .filter((element) => kind !== 'click' || /^(?:button|link|menuitem|tab|checkbox|radio|option|switch)$/i.test(element.role ?? '') ||
-      (includeTreeItems && /^(?:treeitem|listitem)$/i.test(element.role ?? '')))
+    .filter((element) => kind !== 'click' || /^(?:button|link|menuitem|tab|checkbox|radio|option|switch|treeitem|listitem|text|generic)$/i.test(element.role ?? ''))
     .map((element) => {
       const name = normalizeWords(element.name ?? '')
       const tokens = name.split(' ').filter(Boolean)

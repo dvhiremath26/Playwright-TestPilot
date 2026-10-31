@@ -286832,6 +286832,8 @@ async function runAgent(options) {
           steps: testCaseToInspect.steps,
           mode: options.browseMode ?? "start-page",
           selectSnapshotTarget: providerInfo.liveService ? async (stepAction, actionKind, candidates, signal) => {
+            const targetText = parseReplayAction(stepAction)?.target ?? stepAction;
+            const candidateShortlist = rankSnapshotElements(candidates, [targetText]).slice(0, 12);
             const messages = [
               {
                 role: "system",
@@ -286842,7 +286844,7 @@ async function runAgent(options) {
                 content: JSON.stringify({
                   manualStep: stepAction,
                   requiredAction: actionKind,
-                  observedSnapshotElements: candidates.map(({ ref, role, name }) => ({ ref, role, name }))
+                  observedSnapshotElements: candidateShortlist.map(({ ref, role, name }) => ({ ref, role, name }))
                 })
               }
             ];
@@ -286863,7 +286865,7 @@ async function runAgent(options) {
               const backend2 = options.browser?.provenance?.backendLabel ?? "browser";
               throw new SnapshotTargetUnavailableError(`Step "${stepAction}" has no confident match in the ${backend2} snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ""}`);
             }
-            const match = candidates.filter((candidate) => candidate.ref === selected.ref);
+            const match = candidateShortlist.filter((candidate) => candidate.ref === selected.ref);
             if (match.length !== 1) {
               const backend2 = options.browser?.provenance?.backendLabel ?? "browser";
               throw new SnapshotTargetUnavailableError(`The selected model returned ref "${selected.ref}", which is not a unique element in the ${backend2} snapshot.`);
@@ -286913,9 +286915,9 @@ ${item.detail}`
         reuseCoverage: renderReuseCoverage(plan),
         duplicateFindings: renderDuplicateFindings(reuse),
         conventions: analysis.report.conventions.confirmed.join("\n"),
-        actionMethodsSummary: renderActionMethodSummary(analysis.facts.actionMethods),
-        pageObjectNames: analysis.facts.pageObjects,
-        locatorExamples: analysis.facts.locators.slice(0, 20).map((l2) => `${l2.ownerClass}.${l2.name} \u2192 ${l2.expression}`),
+        actionMethodsSummary: renderActionMethodSummary(analysis.facts.actionMethods, reuse),
+        pageObjectNames: renderRelevantPageObjects(analysis),
+        locatorExamples: renderRelevantLocatorExamples(analysis),
         fixtures: analysis.facts.fixtures.map((f) => f.name),
         testDataModules: analysis.facts.testDataModules,
         taskId,
@@ -287220,7 +287222,7 @@ function parseReplayAction(action) {
   if (fill) {
     return { kind: "fill", target: cleanActionTarget(fill[1] ?? ""), value: stripWrappingQuotes(fill[2] ?? "") };
   }
-  const valueFirstFill = /^(?:fill|type|input)\s+(.+?)\s+(?:in|into)\s+(?:the\s+)?(.+)$/i.exec(step);
+  const valueFirstFill = /^(?:enter|fill|type|input)\s+(.+?)\s+(?:in|into)\s+(?:the\s+)?(.+)$/i.exec(step);
   if (valueFirstFill) {
     return {
       kind: "fill",
@@ -287233,7 +287235,7 @@ function parseReplayAction(action) {
   return void 0;
 }
 function cleanActionTarget(value) {
-  return value.replace(/\s+(?:in|from)\s+(?:the\s+)?(?:left\s+|right\s+)?(?:side\s*bar|navigation(?:\s+bar)?|nav(?:\s+bar)?|menu|tab|link)\b.*$/i, "").replace(/^[\s"'`]+|[\s"'`.,]+$/g, "").replace(/\s+(?:button|link|tab|menu\s*item|sub\s*menu|checkbox|radio\s*button|field|textbox|input|icon)$/i, "").replace(/^the\s+/i, "").trim();
+  return value.replace(/\s+(?:in|from|on)\s+(?:the\s+)?(?:left\s+|right\s+)?(?:side\s*bar|navigation(?:\s+bar)?|nav(?:\s+bar)?|menu|tab|link)\b.*$/i, "").replace(/^[\s"'`]+|[\s"'`.,]+$/g, "").replace(/\s+(?:button|link|tab|menu\s*item|sub\s*menu|checkbox|radio\s*button|field|textbox|input|icon)$/i, "").replace(/^the\s+/i, "").trim();
 }
 function stripWrappingQuotes(value) {
   return value.trim().replace(/^["'`]|["'`]$/g, "");
@@ -287374,12 +287376,52 @@ function renderDuplicateFindings(reuse) {
   Recommendation: ${d.recommendation}`
   ).join("\n");
 }
-function renderActionMethodSummary(methods) {
+function renderActionMethodSummary(methods, reuse) {
   if (methods.length === 0) return "The framework exposes no reusable action methods.";
-  return methods.slice(0, 60).map((m) => {
+  if (reuse?.stepReuse.length) {
+    const relevant = /* @__PURE__ */ new Map();
+    for (const step of reuse.stepReuse) {
+      for (const method of step.candidateMethods.slice(0, 2)) {
+        const current = relevant.get(method.qualifiedName);
+        if (current) current.steps.push(step.stepOrder);
+        else relevant.set(method.qualifiedName, { method, steps: [step.stepOrder] });
+      }
+    }
+    if (relevant.size === 0) return "No indexed action method scored as relevant to these manual steps.";
+    return [...relevant.values()].slice(0, 32).map(
+      ({ method, steps }) => `- ${method.qualifiedName} \u2014 ${method.signature} (${method.file}:${method.line}; related to step${steps.length > 1 ? "s" : ""} ${steps.join(",")}; relevance ${method.confidence.toFixed(2)})`
+    ).join("\n");
+  }
+  return methods.slice(0, 12).map((m) => {
     const ns = m.facadeNamespace ? `${m.facadeNamespace}.` : "";
     return `- ${ns}${m.name} \u2014 ${m.signature} (${m.file}:${m.line})`;
   }).join("\n");
+}
+function renderRelevantPageObjects(analysis) {
+  const candidates = analysis.reuse?.stepReuse.flatMap((step) => step.candidatePageObjects.slice(0, 2)) ?? [];
+  const unique = [...new Set(candidates)];
+  return unique.length > 0 ? unique.slice(0, 12) : analysis.facts.pageObjects.slice(0, 12);
+}
+function renderRelevantLocatorExamples(analysis) {
+  const byExpression = /* @__PURE__ */ new Map();
+  for (const step of analysis.reuse?.stepReuse ?? []) {
+    for (const locator of step.candidateLocators.slice(0, 2)) {
+      byExpression.set(
+        locator.expression,
+        `Step ${step.stepOrder}: ${locator.ownerClass}.${locator.name} \u2192 ${locator.expression} (${locator.file}:${locator.line}; relevance ${locator.confidence.toFixed(2)})`
+      );
+    }
+  }
+  if (byExpression.size > 0) return [...byExpression.values()].slice(0, 24);
+  return analysis.facts.locators.slice(0, 12).map((locator) => `${locator.ownerClass}.${locator.name} \u2192 ${locator.expression}`);
+}
+function selectRelevantBrowserCandidates(candidates) {
+  const selected = /* @__PURE__ */ new Map();
+  for (const candidate of candidates) {
+    const order = candidate.stepOrder ?? Number.MAX_SAFE_INTEGER;
+    if (!selected.has(order)) selected.set(order, candidate);
+  }
+  return [...selected.values()].slice(0, 40);
 }
 async function generateChangesFromProvider(options) {
   const config = buildConfig(options.config ?? {}, options.repositoryRoot);
@@ -287418,7 +287460,7 @@ async function generateChangesFromProvider(options) {
   } : void 0;
   const targetSpecPath = manualCases.length > 1 ? `tests/${scenarioStem}.spec.ts` : existingTestPath ?? `tests/${stem}.spec.ts`;
   const browserEvidence = [
-    ...(options.task.browserLocatorCandidates ?? []).map((candidate) => `Observed for step ${candidate.stepOrder ?? "unspecified"} on ${candidate.pageUrl ?? "an inspected screen"} via ${candidate.backend} at ${candidate.observedAt}: ref=${candidate.ref}, role=${candidate.role ?? "unknown"}, name=${candidate.name ?? "unnamed"}, locator=${candidate.expression}`),
+    ...selectRelevantBrowserCandidates(options.task.browserLocatorCandidates ?? []).map((candidate) => `Observed for step ${candidate.stepOrder ?? "unspecified"} on ${candidate.pageUrl ?? "an inspected screen"} via ${candidate.backend} at ${candidate.observedAt}: ref=${candidate.ref}, role=${candidate.role ?? "unknown"}, name=${candidate.name ?? "unnamed"}, locator=${candidate.expression}`),
     ...options.plan.flatMap((entry) => entry.verifiedLocator ? [`Selected for step ${entry.stepOrder} (${entry.stepAction}): ${entry.verifiedLocator.expression} via ${entry.verifiedLocator.backend}, ref=${entry.verifiedLocator.ref}`] : [])
   ].join("\n");
   const frameworkExamples = renderFrameworkExamples(options.analysis);
@@ -287426,7 +287468,7 @@ async function generateChangesFromProvider(options) {
     const absolute = (0, import_node_path9.join)(options.repositoryRoot, path3);
     return (0, import_node_fs7.existsSync)(absolute) ? [`EXISTING SHARED FILE ${path3}
 \`\`\`typescript
-${(0, import_node_fs7.readFileSync)(absolute, "utf-8").slice(0, 12e3)}
+${(0, import_node_fs7.readFileSync)(absolute, "utf-8").slice(0, 6e3)}
 \`\`\``] : [];
   });
   if (sharedPageSources.length > 0) {
@@ -287456,11 +287498,11 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
         ).join("\n"),
         duplicateFindings: "See the selected plan.",
         conventions: report.conventions.confirmed.join("\n"),
-        actionMethodsSummary: renderActionMethodSummary(facts.actionMethods),
-        pageObjectNames: facts.pageObjects,
-        locatorExamples: facts.locators.slice(0, 20).map((l2) => `${l2.ownerClass}.${l2.name} \u2192 ${l2.expression}`),
+        actionMethodsSummary: renderActionMethodSummary(facts.actionMethods, options.analysis.reuse),
+        pageObjectNames: renderRelevantPageObjects(options.analysis),
+        locatorExamples: renderRelevantLocatorExamples(options.analysis),
         fixtures: facts.fixtures.map((f) => f.name),
-        testDataModules: facts.testDataModules,
+        testDataModules: facts.testDataModules.slice(0, 12),
         taskId: options.task.taskId,
         approvalMode: config.approvalMode,
         approvedPlan: renderReuseCoverage(options.plan),
@@ -287848,7 +287890,7 @@ function renderFrameworkExamples(analysis) {
     ({ file, source }) => `### ${file.relativePath}
 
 \`\`\`typescript
-${source.slice(0, 5e3)}
+${source.slice(0, 3500)}
 \`\`\``
   ).join("\n\n");
   const testSource = testCandidates[0]?.source ?? "";

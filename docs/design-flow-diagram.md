@@ -55,20 +55,21 @@ including form submission and application data changes. The extension uses its c
 target URL, or extracts the first URL from the manual steps. The target URL must not contain
 credentials.
 
-Follow Steps replays explicit URLs and uniquely matched click and text-entry actions against
-the live accessibility snapshot. It captures a new snapshot after each step. Locator
-candidates are generated from observed refs and scoped to the step and screen where they
-were seen; a reviewer still maps the candidate to the plan step. Ambiguous controls and
-unsupported actions are not replayed automatically. Start Page Only captures the initial
-screen and offers its candidates only for the first actionable step. MCP does not support
-locator generation and yields no candidates. Steps without a selected candidate remain
-TODOs rather than receiving a guessed locator.
+Follow Steps replays explicit URLs and supported click, text-entry, check/uncheck, and
+expand/collapse actions against live accessibility snapshots. It waits for page load and
+network idle before inspecting the next screen. Locator candidates are generated from
+observed refs and scoped to the step and screen where they were seen. The selected model
+chooses among a relevance-ranked subset of snapshot elements; uncertain CLI matches trigger
+a fresh replay through MCP. Both backends use isolated, non-reused browser profiles. Steps
+that are unsupported or still ambiguous stop inspection rather than receiving a guessed
+locator. Start Page Only captures the initial screen and offers candidates only for the first
+actionable step.
 
-The CLI supports `--target-url <url>` with `--browse`. MCP is disabled unless a command is
-explicitly configured with `--browser-mcp-command`; optional arguments can be supplied
-with `--browser-mcp-args`. The extension currently creates the CLI-primary browser session
-without configuring an MCP fallback; extension MCP settings and fallback behavior remain
-pending.
+The CLI supports `--target-url <url>` with `--browse`, and optionally `--browser-mcp-command`
+plus `--browser-mcp-args` for secondary fallback. The VS Code extension configures Playwright
+CLI as primary and Playwright MCP as fallback. Browser MCP evidence is generated from fresh
+snapshot refs; it is not treated as a locator source unless the adapter can verify a unique
+role/name pair.
 
 ## Model boundaries
 
@@ -109,8 +110,9 @@ Verified in the current workspace:
 - Saved task continuation through `resume`, with repository drift checks before generation
   and apply.
 - CLI plan, deterministic proposal generation, apply, and validation commands.
-- VS Code extension 0.1.10 is packaged with step-by-step browser inspection. A live
-  extension-host run against the user's application remains unverified.
+- VS Code extension builds through 0.1.53 are packaged with step-by-step browser inspection,
+  isolated CLI/MCP sessions, and bounded page-readiness waits. A live extension-host run
+  against the user's SAP application remains unverified.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of
   `npm run check` and is not called by the extension generation path.
 - The last recorded full check passed 154 tests before the latest model-generation changes;

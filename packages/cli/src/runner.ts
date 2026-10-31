@@ -308,6 +308,10 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
           mode: options.browseMode ?? 'start-page',
           selectSnapshotTarget: providerInfo.liveService
             ? async (stepAction, actionKind, candidates, signal) => {
+                // Keep the LLM's choice grounded in the live snapshot, but send only
+                // the highest-relevance named candidates instead of the full tree.
+                const targetText = parseReplayAction(stepAction)?.target ?? stepAction
+                const candidateShortlist = rankSnapshotElements(candidates, [targetText]).slice(0, 12)
                 const messages: ChatMessage[] = [
                   {
                     role: 'system',
@@ -318,7 +322,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
                     content: JSON.stringify({
                       manualStep: stepAction,
                       requiredAction: actionKind,
-                      observedSnapshotElements: candidates.map(({ ref, role, name }) => ({ ref, role, name })),
+                      observedSnapshotElements: candidateShortlist.map(({ ref, role, name }) => ({ ref, role, name })),
                     }),
                   },
                 ]
@@ -339,7 +343,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
                   const backend = options.browser?.provenance?.backendLabel ?? 'browser'
                   throw new SnapshotTargetUnavailableError(`Step "${stepAction}" has no confident match in the ${backend} snapshot.${selected.reason ? ` Model response: ${selected.reason}` : ''}`)
                 }
-                const match = candidates.filter((candidate) => candidate.ref === selected.ref)
+                const match = candidateShortlist.filter((candidate) => candidate.ref === selected.ref)
                 if (match.length !== 1) {
                   const backend = options.browser?.provenance?.backendLabel ?? 'browser'
                   throw new SnapshotTargetUnavailableError(`The selected model returned ref "${selected.ref}", which is not a unique element in the ${backend} snapshot.`)
@@ -400,9 +404,9 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
         reuseCoverage: renderReuseCoverage(plan),
         duplicateFindings: renderDuplicateFindings(reuse),
         conventions: analysis.report.conventions.confirmed.join('\n'),
-        actionMethodsSummary: renderActionMethodSummary(analysis.facts.actionMethods),
-        pageObjectNames: analysis.facts.pageObjects,
-        locatorExamples: analysis.facts.locators.slice(0, 20).map((l) => `${l.ownerClass}.${l.name} → ${l.expression}`),
+        actionMethodsSummary: renderActionMethodSummary(analysis.facts.actionMethods, reuse),
+        pageObjectNames: renderRelevantPageObjects(analysis),
+        locatorExamples: renderRelevantLocatorExamples(analysis),
         fixtures: analysis.facts.fixtures.map((f) => f.name),
         testDataModules: analysis.facts.testDataModules,
         taskId,
@@ -782,7 +786,9 @@ function parseReplayAction(action: string): ReplayAction | undefined {
   if (fill) {
     return { kind: 'fill', target: cleanActionTarget(fill[1] ?? ''), value: stripWrappingQuotes(fill[2] ?? '') }
   }
-  const valueFirstFill = /^(?:fill|type|input)\s+(.+?)\s+(?:in|into)\s+(?:the\s+)?(.+)$/i.exec(step)
+  // Accept both field-first (`Enter username as ...`) and value-first
+  // (`Enter ... into username field`) manual test case conventions.
+  const valueFirstFill = /^(?:enter|fill|type|input)\s+(.+?)\s+(?:in|into)\s+(?:the\s+)?(.+)$/i.exec(step)
   if (valueFirstFill) {
     return {
       kind: 'fill',
@@ -797,7 +803,7 @@ function parseReplayAction(action: string): ReplayAction | undefined {
 
 function cleanActionTarget(value: string): string {
   return value
-    .replace(/\s+(?:in|from)\s+(?:the\s+)?(?:left\s+|right\s+)?(?:side\s*bar|navigation(?:\s+bar)?|nav(?:\s+bar)?|menu|tab|link)\b.*$/i, '')
+    .replace(/\s+(?:in|from|on)\s+(?:the\s+)?(?:left\s+|right\s+)?(?:side\s*bar|navigation(?:\s+bar)?|nav(?:\s+bar)?|menu|tab|link)\b.*$/i, '')
     .replace(/^[\s"'`]+|[\s"'`.,]+$/g, '')
     .replace(/\s+(?:button|link|tab|menu\s*item|sub\s*menu|checkbox|radio\s*button|field|textbox|input|icon)$/i, '')
     .replace(/^the\s+/i, '')
@@ -1018,15 +1024,61 @@ function renderDuplicateFindings(reuse: ReuseReport | undefined): string {
     .join('\n')
 }
 
-function renderActionMethodSummary(methods: FrameworkAnalysisResult['facts']['actionMethods']): string {
+function renderActionMethodSummary(
+  methods: FrameworkAnalysisResult['facts']['actionMethods'],
+  reuse?: ReuseReport,
+): string {
   if (methods.length === 0) return 'The framework exposes no reusable action methods.'
-  return methods
-    .slice(0, 60)
-    .map((m) => {
-      const ns = m.facadeNamespace ? `${m.facadeNamespace}.` : ''
-      return `- ${ns}${m.name} — ${m.signature} (${m.file}:${m.line})`
-    })
-    .join('\n')
+  if (reuse?.stepReuse.length) {
+    const relevant = new Map<string, { method: (typeof reuse.stepReuse)[number]['candidateMethods'][number]; steps: number[] }>()
+    for (const step of reuse.stepReuse) {
+      for (const method of step.candidateMethods.slice(0, 2)) {
+        const current = relevant.get(method.qualifiedName)
+        if (current) current.steps.push(step.stepOrder)
+        else relevant.set(method.qualifiedName, { method, steps: [step.stepOrder] })
+      }
+    }
+    if (relevant.size === 0) return 'No indexed action method scored as relevant to these manual steps.'
+    return [...relevant.values()].slice(0, 32).map(({ method, steps }) =>
+      `- ${method.qualifiedName} — ${method.signature} (${method.file}:${method.line}; related to step${steps.length > 1 ? 's' : ''} ${steps.join(',')}; relevance ${method.confidence.toFixed(2)})`,
+    ).join('\n')
+  }
+  return methods.slice(0, 12).map((m) => {
+    const ns = m.facadeNamespace ? `${m.facadeNamespace}.` : ''
+    return `- ${ns}${m.name} — ${m.signature} (${m.file}:${m.line})`
+  }).join('\n')
+}
+
+/** Retrieve only page objects ranked against this request's manual steps. */
+function renderRelevantPageObjects(analysis: FrameworkAnalysisResult): string[] {
+  const candidates = analysis.reuse?.stepReuse.flatMap((step) => step.candidatePageObjects.slice(0, 2)) ?? []
+  const unique = [...new Set(candidates)]
+  return unique.length > 0 ? unique.slice(0, 12) : analysis.facts.pageObjects.slice(0, 12)
+}
+
+/** Small per-step locator RAG context; never send an arbitrary repository-wide prefix. */
+function renderRelevantLocatorExamples(analysis: FrameworkAnalysisResult): string[] {
+  const byExpression = new Map<string, string>()
+  for (const step of analysis.reuse?.stepReuse ?? []) {
+    for (const locator of step.candidateLocators.slice(0, 2)) {
+      byExpression.set(
+        locator.expression,
+        `Step ${step.stepOrder}: ${locator.ownerClass}.${locator.name} → ${locator.expression} (${locator.file}:${locator.line}; relevance ${locator.confidence.toFixed(2)})`,
+      )
+    }
+  }
+  if (byExpression.size > 0) return [...byExpression.values()].slice(0, 24)
+  return analysis.facts.locators.slice(0, 12).map((locator) => `${locator.ownerClass}.${locator.name} → ${locator.expression}`)
+}
+
+/** Keep browser context to the most useful verified candidate per manual step. */
+function selectRelevantBrowserCandidates(candidates: VerifiedLocator[]): VerifiedLocator[] {
+  const selected = new Map<number, VerifiedLocator>()
+  for (const candidate of candidates) {
+    const order = candidate.stepOrder ?? Number.MAX_SAFE_INTEGER
+    if (!selected.has(order)) selected.set(order, candidate)
+  }
+  return [...selected.values()].slice(0, 40)
 }
 
 export { summariseAnalysis, fingerprint, STAGE_SEQUENCE }
@@ -1191,7 +1243,7 @@ export async function generateChangesFromProvider(
     ? `tests/${scenarioStem}.spec.ts`
     : existingTestPath ?? `tests/${stem}.spec.ts`
   const browserEvidence = [
-    ...(options.task.browserLocatorCandidates ?? []).map((candidate) =>
+    ...selectRelevantBrowserCandidates(options.task.browserLocatorCandidates ?? []).map((candidate) =>
       `Observed for step ${candidate.stepOrder ?? 'unspecified'} on ${candidate.pageUrl ?? 'an inspected screen'} via ${candidate.backend} at ${candidate.observedAt}: ref=${candidate.ref}, role=${candidate.role ?? 'unknown'}, name=${candidate.name ?? 'unnamed'}, locator=${candidate.expression}`),
     ...(options.plan.flatMap((entry) => entry.verifiedLocator
       ? [`Selected for step ${entry.stepOrder} (${entry.stepAction}): ${entry.verifiedLocator.expression} via ${entry.verifiedLocator.backend}, ref=${entry.verifiedLocator.ref}`]
@@ -1201,7 +1253,7 @@ export async function generateChangesFromProvider(
   const sharedPageSources = [targetPagePath, targetLocatorPath].flatMap((path) => {
     const absolute = join(options.repositoryRoot, path)
     return existsSync(absolute)
-      ? [`EXISTING SHARED FILE ${path}\n\`\`\`typescript\n${readFileSync(absolute, 'utf-8').slice(0, 12000)}\n\`\`\``]
+      ? [`EXISTING SHARED FILE ${path}\n\`\`\`typescript\n${readFileSync(absolute, 'utf-8').slice(0, 6000)}\n\`\`\``]
       : []
   })
   if (sharedPageSources.length > 0) {
@@ -1234,13 +1286,11 @@ export async function generateChangesFromProvider(
           .join('\n'),
         duplicateFindings: 'See the selected plan.',
         conventions: report.conventions.confirmed.join('\n'),
-        actionMethodsSummary: renderActionMethodSummary(facts.actionMethods),
-        pageObjectNames: facts.pageObjects,
-        locatorExamples: facts.locators
-          .slice(0, 20)
-          .map((l) => `${l.ownerClass}.${l.name} → ${l.expression}`),
+        actionMethodsSummary: renderActionMethodSummary(facts.actionMethods, options.analysis.reuse),
+        pageObjectNames: renderRelevantPageObjects(options.analysis),
+        locatorExamples: renderRelevantLocatorExamples(options.analysis),
         fixtures: facts.fixtures.map((f) => f.name),
-        testDataModules: facts.testDataModules,
+        testDataModules: facts.testDataModules.slice(0, 12),
         taskId: options.task.taskId,
         approvalMode: config.approvalMode,
         approvedPlan: renderReuseCoverage(options.plan),
@@ -1736,7 +1786,7 @@ function renderFrameworkExamples(analysis: FrameworkAnalysisResult): FrameworkGe
     (item): item is NonNullable<typeof item> => Boolean(item),
   )
   const text = selected.map(({ file, source }) =>
-    `### ${file.relativePath}\n\n\`\`\`typescript\n${source.slice(0, 5000)}\n\`\`\``,
+    `### ${file.relativePath}\n\n\`\`\`typescript\n${source.slice(0, 3500)}\n\`\`\``,
   ).join('\n\n')
   const testSource = testCandidates[0]?.source ?? ''
   const pageSource = pageCandidates[0]?.source ?? ''

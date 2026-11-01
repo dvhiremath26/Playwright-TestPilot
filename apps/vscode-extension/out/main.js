@@ -287034,6 +287034,33 @@ async function gatherEvidenceForTestCase(browser, options) {
           action.kind,
           action.kind === "click" && Boolean(action.intent)
         ).map((candidate) => candidate.element);
+        const bestSnapshotScore = findActionTargets(
+          snapshot,
+          action.target,
+          action.kind,
+          action.kind === "click" && Boolean(action.intent)
+        )[0]?.score ?? 0;
+        if (bestSnapshotScore < 0.35) {
+          const domElements = await inspectVisibleDomTargets(browser, action.target, options.signal);
+          if (domElements.length > 0) {
+            const existingRefs = new Set(snapshot.elements.map((element) => element.ref));
+            const newElements = domElements.filter((element) => !existingRefs.has(element.ref));
+            if (newElements.length > 0) {
+              snapshot = { ...snapshot, elements: [...snapshot.elements, ...newElements] };
+              compatibleTargets = findActionTargets(
+                snapshot,
+                action.target,
+                action.kind,
+                action.kind === "click" && Boolean(action.intent)
+              ).map((candidate) => candidate.element);
+              evidence.push({
+                kind: "snapshot",
+                detail: `Step ${step.order}: enriched generic accessibility snapshot labels with ${newElements.length} visible DOM target(s) for "${action.target}".`,
+                source: browser.provenance ?? navigation.source
+              });
+            }
+          }
+        }
         if (compatibleTargets.length === 0) {
           for (let retry = 0; retry < 6 && compatibleTargets.length === 0; retry++) {
             if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
@@ -287133,6 +287160,19 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
     const candidates = [];
     for (const element of elements) {
       if (options.signal?.aborted) throw new Error("Browser locator discovery was cancelled.");
+      if (element.locatorExpression) {
+        candidates.push({
+          ref: element.ref,
+          role: element.role,
+          name: element.name,
+          expression: element.locatorExpression,
+          backend: browser.provenance?.backendLabel ?? "browser DOM inspection",
+          observedAt: observed.capturedAt,
+          stepOrder,
+          pageUrl
+        });
+        continue;
+      }
       const generated = await browser.generateLocator(element.ref, { signal: options.signal });
       const expression = generated.output?.trim();
       if (!generated.ok || !expression || !/^(getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\(/.test(expression)) continue;
@@ -287149,6 +287189,75 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
     }
     return candidates;
   }
+}
+async function inspectVisibleDomTargets(browser, requestedTarget, signal) {
+  const inspected = await browser.execute(
+    (tool, callOptions) => tool.eval(`() => {
+      const selector = 'a,button,[role="link"],[role="button"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter';
+      const roots = [document];
+      for (let index = 0; index < roots.length && index < 40; index++) {
+        for (const node of roots[index].querySelectorAll('*')) {
+          if (node.shadowRoot) roots.push(node.shadowRoot);
+        }
+      }
+      const seen = new Set();
+      return roots.flatMap((root) => Array.from(root.querySelectorAll(selector))).filter((el) => {
+        if (seen.has(el)) return false;
+        seen.add(el);
+        const rect = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && el.getAttribute('aria-hidden') !== 'true';
+      }).map((el) => {
+        const tag = el.tagName.toLowerCase();
+        const explicitRole = el.getAttribute('role');
+        const classes = typeof el.className === 'string' ? el.className : '';
+        const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : 'generic');
+        const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+        return { role, name };
+      }).filter((item) => item.name && item.name.length > 1).slice(0, 100);
+    }`, void 0, callOptions),
+    { signal }
+  );
+  if (!inspected.ok || !inspected.output) return [];
+  const rows = parseEvaluatedDomRows(inspected.output);
+  const wanted = normalizeWords(requestedTarget);
+  const matching = rows.map((row) => ({ ...row, score: textMatchScore(normalizeWords(row.name), wanted) })).filter((row) => row.score >= 0.35).sort((a, b) => b.score - a.score).slice(0, 20);
+  const counts = /* @__PURE__ */ new Map();
+  for (const row of matching) {
+    const key = `${row.role ?? ""}\0${row.name}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return matching.flatMap((row) => {
+    if ((counts.get(`${row.role ?? ""}\0${row.name}`) ?? 0) !== 1) return [];
+    const expression = row.role && row.role !== "generic" ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : `getByText(${JSON.stringify(row.name)}, { exact: true })`;
+    const selector = row.role && row.role !== "generic" ? `role=${row.role}[name=${JSON.stringify(row.name)}]` : `text=${JSON.stringify(row.name)}`;
+    return [{ ref: selector, role: row.role, name: row.name, actionable: true, locatorExpression: expression }];
+  });
+}
+function parseEvaluatedDomRows(output) {
+  const start = output.indexOf("[");
+  const end = output.lastIndexOf("]");
+  if (start < 0 || end <= start) return [];
+  try {
+    const value = JSON.parse(output.slice(start, end + 1));
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const row = item;
+      if (typeof row.name !== "string" || !row.name.trim()) return [];
+      return [{ role: typeof row.role === "string" ? row.role : void 0, name: row.name.trim() }];
+    });
+  } catch {
+    return [];
+  }
+}
+function textMatchScore(candidate, wanted) {
+  if (!candidate || !wanted) return 0;
+  if (candidate === wanted) return 1;
+  if (candidate.includes(wanted) || wanted.includes(candidate)) return 0.9;
+  const wantedTokens = new Set(wanted.split(" ").filter(Boolean));
+  const overlap = candidate.split(" ").filter((token) => wantedTokens.has(token)).length;
+  return overlap / Math.max(wantedTokens.size, candidate.split(" ").length, 1);
 }
 function parseSnapshotTargetSelection(text) {
   const normalized = text.trim().replace(/^```(?:json)?\s*|\s*```$/gi, "").trim();
@@ -287531,7 +287640,8 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
   const standardIssues = (changes2) => [
     ...findFrameworkStandardIssues(changes2, frameworkExamples, facts.customFixtureUsed, approvedLocatorExpressions),
     ...findAssertionLocatorIssues(changes2, manualCases, options.task.browserLocatorCandidates ?? []),
-    ...findManualNavigationIssues(changes2, manualCases)
+    ...findManualNavigationIssues(changes2, manualCases),
+    ...findManualStepCoverageIssues(changes2, manualCases)
   ];
   let response = await provider.chat(messages, { purpose: "generate", modelId, signal: options.signal });
   recordGenerationCall(response.modelId);
@@ -287784,6 +287894,110 @@ function findManualNavigationIssues(changes, testCases) {
     }
   }
   return [...new Set(issues)];
+}
+function findManualStepCoverageIssues(changes, testCases) {
+  const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, "/")}`));
+  const issues = [];
+  for (const testCase of testCases) {
+    const matchingBodies = specs.flatMap((spec) => {
+      const body2 = extractNamedTestBody(spec.newContent ?? "", testCase.title);
+      return body2 === void 0 ? [] : [body2];
+    });
+    if (matchingBodies.length !== 1) {
+      issues.push(`Could not verify one standalone test body for '${testCase.title}'. Generate one literal test('${testCase.title}', ...) block so every manual step can be checked.`);
+      continue;
+    }
+    const body = matchingBodies[0];
+    const executableCalls = [...body.matchAll(/\bawait\b/g)].length;
+    const actions = testCase.steps.filter((step) => !extractStepUrl(step.action));
+    if (executableCalls < actions.length) {
+      issues.push(`Test '${testCase.title}' has ${executableCalls} awaited call(s) for ${actions.length} non-navigation manual step(s). Add an executable call for every step, in order.`);
+    }
+    const awaitedLines = body.split(/\r?\n/).filter((line) => /\bawait\b/.test(line));
+    const awaitedCalls = awaitedLines.flatMap(
+      (line) => [...line.matchAll(/\.\s*([A-Za-z_$][\w$]*)\s*\(/g)].map((match) => match[1] ?? "")
+    );
+    const awaitedLocators = awaitedLines.flatMap(
+      (line) => [...line.matchAll(/\b(?:locators|locator)\.([A-Za-z_$][\w$]*)/g)].map((match) => match[1] ?? "")
+    );
+    const bodyWords = new Set(normalizeCoverageText([...awaitedCalls, ...awaitedLocators].join(" ")).split(" ").filter(Boolean));
+    for (const step of actions) {
+      if (isLocatorAssertionStep(step.action)) {
+        if (!/\b(?:expect|assert|validate|verify|toBe|toHave|toContain)\w*/i.test(body)) {
+          issues.push(`Test '${testCase.title}' has no assertion or validation call for manual step ${step.order}: '${step.action}'.`);
+        }
+        continue;
+      }
+      const target = parseReplayAction(step.action)?.target;
+      const terms = target ? coverageTerms(target) : [];
+      const missing = terms.filter((term) => !bodyWords.has(term));
+      if (missing.length > 0) {
+        issues.push(`Test '${testCase.title}' does not visibly implement manual step ${step.order}: '${step.action}'. Its target term(s) ${missing.join(", ")} are absent from that test body.`);
+      }
+    }
+  }
+  return [...new Set(issues)];
+}
+function extractNamedTestBody(source, title) {
+  const pattern = new RegExp(`\\btest\\s*\\(\\s*(['"\`])${escapeRegExp(title)}\\1\\s*,[\\s\\S]*?=>\\s*\\{`);
+  const match = pattern.exec(source);
+  if (!match || match.index === void 0) return void 0;
+  const openBrace = match.index + match[0].lastIndexOf("{");
+  const closeBrace = findMatchingBrace(source, openBrace);
+  return closeBrace < 0 ? void 0 : source.slice(openBrace + 1, closeBrace);
+}
+function findMatchingBrace(source, openBrace) {
+  let depth = 0;
+  let quote;
+  let lineComment = false;
+  let blockComment = false;
+  for (let index = openBrace; index < source.length; index++) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (lineComment) {
+      if (char === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (char === "*" && next === "/") {
+        blockComment = false;
+        index++;
+      }
+      continue;
+    }
+    if (quote) {
+      if (char === "\\") {
+        index++;
+        continue;
+      }
+      if (char === quote) quote = void 0;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      lineComment = true;
+      index++;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      blockComment = true;
+      index++;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "{") depth++;
+    if (char === "}" && --depth === 0) return index;
+  }
+  return -1;
+}
+function normalizeCoverageText(value) {
+  return value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\b(?:listing|listed)\b/g, "list").trim().replace(/\s+/g, " ");
+}
+function coverageTerms(value) {
+  const ignored = /* @__PURE__ */ new Set(["the", "a", "an", "on", "in", "to", "from", "of", "for", "with", "and", "or", "enter", "fill", "type", "input", "select", "choose", "side", "sidebar", "navigation", "nav", "menu", "submenu", "sub", "item", "button", "link", "icon", "field", "textbox", "checkbox", "radio", "visible", "displayed", "shown", "page", "screen"]);
+  return [...new Set(normalizeCoverageText(value).split(" ").map((word) => word === "listing" ? "list" : word).filter((word) => word.length > 1 && !ignored.has(word)))];
 }
 function findAssertionLocatorIssues(changes, testCases, candidates) {
   const locatorFiles = changes.filter((change) => /(^|\/)pages\/.+\.locators\.tsx?$/.test(`/${change.path.replace(/\\/g, "/")}`));

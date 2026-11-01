@@ -58,8 +58,10 @@ credentials.
 Follow Steps replays explicit URLs and supported click, text-entry, check/uncheck, and
 expand/collapse actions against live accessibility snapshots. It waits for page load and
 network idle before inspecting the next screen. Locator candidates are generated from
-observed refs and scoped to the step and screen where they were seen. The selected model
-chooses among a relevance-ranked subset of snapshot elements; uncertain CLI matches trigger
+observed refs and scoped to the step and screen where they were seen. If the snapshot exposes
+only generic labels, TestPilot inspects visible interactive DOM nodes and uses observed text,
+roles, or SAP/Fiori control attributes to build a unique candidate. The selected model chooses
+among a relevance-ranked subset of snapshot and DOM candidates; uncertain CLI matches trigger
 a fresh replay through MCP. Both backends use isolated, non-reused browser profiles. Steps
 that are unsupported or still ambiguous stop inspection rather than receiving a guessed
 locator. Start Page Only captures the initial screen and offers candidates only for the first
@@ -67,9 +69,9 @@ actionable step.
 
 The CLI supports `--target-url <url>` with `--browse`, and optionally `--browser-mcp-command`
 plus `--browser-mcp-args` for secondary fallback. The VS Code extension configures Playwright
-CLI as primary and Playwright MCP as fallback. Browser MCP evidence is generated from fresh
-snapshot refs; it is not treated as a locator source unless the adapter can verify a unique
-role/name pair.
+CLI as primary and Playwright MCP as fallback. Evidence is generated from fresh snapshot
+refs; when those refs have generic labels, visible DOM inspection can supply a unique,
+observed text/role selector. Ambiguous matches still stop instead of becoming guessed locators.
 
 ## Model boundaries
 
@@ -110,7 +112,9 @@ Verified in the current workspace:
 - Saved task continuation through `resume`, with repository drift checks before generation
   and apply.
 - CLI plan, deterministic proposal generation, apply, and validation commands.
-- VS Code extension builds through 0.1.53 are packaged with step-by-step browser inspection,
+- VS Code extension build 0.1.56 adds DOM-grounded locator discovery when accessibility
+  snapshots expose only generic labels and rejects specs with missing step actions; packaged
+  builds also include step-by-step inspection,
   isolated CLI/MCP sessions, and bounded page-readiness waits. A live extension-host run
   against the user's SAP application remains unverified.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of

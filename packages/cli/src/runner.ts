@@ -557,6 +557,36 @@ export async function gatherEvidenceForTestCase(
         action.kind === 'click' && Boolean(action.intent),
       )
         .map((candidate) => candidate.element)
+      // Some enterprise shells (including SAP/Fiori) expose poorly named links in
+      // accessibility snapshots. When the snapshot has no plausible candidate,
+      // inspect visible interactive DOM nodes and add only text/role grounded targets.
+      const bestSnapshotScore = findActionTargets(
+        snapshot,
+        action.target,
+        action.kind,
+        action.kind === 'click' && Boolean(action.intent),
+      )[0]?.score ?? 0
+      if (bestSnapshotScore < 0.35) {
+        const domElements = await inspectVisibleDomTargets(browser, action.target, options.signal)
+        if (domElements.length > 0) {
+          const existingRefs = new Set(snapshot.elements.map((element) => element.ref))
+          const newElements = domElements.filter((element) => !existingRefs.has(element.ref))
+          if (newElements.length > 0) {
+            snapshot = { ...snapshot, elements: [...snapshot.elements, ...newElements] }
+            compatibleTargets = findActionTargets(
+              snapshot,
+              action.target,
+              action.kind,
+              action.kind === 'click' && Boolean(action.intent),
+            ).map((candidate) => candidate.element)
+            evidence.push({
+              kind: 'snapshot',
+              detail: `Step ${step.order}: enriched generic accessibility snapshot labels with ${newElements.length} visible DOM target(s) for "${action.target}".`,
+              source: browser.provenance ?? navigation.source,
+            })
+          }
+        }
+      }
       // Enterprise apps often finish an SSO redirect or client-side menu render
       // shortly after the click command returns. Give the current page a brief,
       // bounded chance to expose the next screen before declaring that its
@@ -679,6 +709,19 @@ export async function gatherEvidenceForTestCase(
     const candidates: VerifiedLocator[] = []
     for (const element of elements) {
       if (options.signal?.aborted) throw new Error('Browser locator discovery was cancelled.')
+      if (element.locatorExpression) {
+        candidates.push({
+          ref: element.ref,
+          role: element.role,
+          name: element.name,
+          expression: element.locatorExpression,
+          backend: browser.provenance?.backendLabel ?? 'browser DOM inspection',
+          observedAt: observed.capturedAt,
+          stepOrder,
+          pageUrl,
+        })
+        continue
+      }
       const generated = await browser.generateLocator(element.ref, { signal: options.signal })
       const expression = generated.output?.trim()
       if (!generated.ok || !expression || !/^(getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\(/.test(expression)) continue
@@ -695,6 +738,100 @@ export async function gatherEvidenceForTestCase(
     }
     return candidates
   }
+}
+
+/**
+ * Inspect visible interactive nodes when an accessibility snapshot has only generic
+ * names. The returned target selectors and locator expressions are derived from the
+ * current DOM's observed role and visible/accessibility name, never from model guesses.
+ */
+async function inspectVisibleDomTargets(
+  browser: BrowserSession,
+  requestedTarget: string,
+  signal?: AbortSignal,
+): Promise<BrowserElementRef[]> {
+  const inspected = await browser.execute(
+    (tool, callOptions) => tool.eval(`() => {
+      const selector = 'a,button,[role="link"],[role="button"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter';
+      const roots = [document];
+      for (let index = 0; index < roots.length && index < 40; index++) {
+        for (const node of roots[index].querySelectorAll('*')) {
+          if (node.shadowRoot) roots.push(node.shadowRoot);
+        }
+      }
+      const seen = new Set();
+      return roots.flatMap((root) => Array.from(root.querySelectorAll(selector))).filter((el) => {
+        if (seen.has(el)) return false;
+        seen.add(el);
+        const rect = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && el.getAttribute('aria-hidden') !== 'true';
+      }).map((el) => {
+        const tag = el.tagName.toLowerCase();
+        const explicitRole = el.getAttribute('role');
+        const classes = typeof el.className === 'string' ? el.className : '';
+        const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : 'generic');
+        const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+        return { role, name };
+      }).filter((item) => item.name && item.name.length > 1).slice(0, 100);
+    }`, undefined, callOptions),
+    { signal },
+  )
+  if (!inspected.ok || !inspected.output) return []
+
+  const rows = parseEvaluatedDomRows(inspected.output)
+  const wanted = normalizeWords(requestedTarget)
+  const matching = rows
+    .map((row) => ({ ...row, score: textMatchScore(normalizeWords(row.name), wanted) }))
+    .filter((row) => row.score >= 0.35)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 20)
+
+  const counts = new Map<string, number>()
+  for (const row of matching) {
+    const key = `${row.role ?? ''}\u0000${row.name}`
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+
+  return matching.flatMap((row) => {
+    // Identical role/name targets need more context than this fallback has. Keep
+    // them unresolved instead of emitting an ambiguous locator.
+    if ((counts.get(`${row.role ?? ''}\u0000${row.name}`) ?? 0) !== 1) return []
+    const expression = row.role && row.role !== 'generic'
+      ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })`
+      : `getByText(${JSON.stringify(row.name)}, { exact: true })`
+    const selector = row.role && row.role !== 'generic'
+      ? `role=${row.role}[name=${JSON.stringify(row.name)}]`
+      : `text=${JSON.stringify(row.name)}`
+    return [{ ref: selector, role: row.role, name: row.name, actionable: true, locatorExpression: expression }]
+  })
+}
+
+function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: string }> {
+  const start = output.indexOf('[')
+  const end = output.lastIndexOf(']')
+  if (start < 0 || end <= start) return []
+  try {
+    const value: unknown = JSON.parse(output.slice(start, end + 1))
+    if (!Array.isArray(value)) return []
+    return value.flatMap((item) => {
+      if (!item || typeof item !== 'object') return []
+      const row = item as { role?: unknown; name?: unknown }
+      if (typeof row.name !== 'string' || !row.name.trim()) return []
+      return [{ role: typeof row.role === 'string' ? row.role : undefined, name: row.name.trim() }]
+    })
+  } catch {
+    return []
+  }
+}
+
+function textMatchScore(candidate: string, wanted: string): number {
+  if (!candidate || !wanted) return 0
+  if (candidate === wanted) return 1
+  if (candidate.includes(wanted) || wanted.includes(candidate)) return 0.9
+  const wantedTokens = new Set(wanted.split(' ').filter(Boolean))
+  const overlap = candidate.split(' ').filter((token) => wantedTokens.has(token)).length
+  return overlap / Math.max(wantedTokens.size, candidate.split(' ').length, 1)
 }
 
 type ReplayAction =
@@ -1324,6 +1461,7 @@ export async function generateChangesFromProvider(
       ...findFrameworkStandardIssues(changes, frameworkExamples, facts.customFixtureUsed, approvedLocatorExpressions),
       ...findAssertionLocatorIssues(changes, manualCases, options.task.browserLocatorCandidates ?? []),
       ...findManualNavigationIssues(changes, manualCases),
+      ...findManualStepCoverageIssues(changes, manualCases),
     ]
 
   let response = await provider.chat(messages, { purpose: 'generate', modelId, signal: options.signal })
@@ -1645,6 +1783,116 @@ function findManualNavigationIssues(changes: FileChange[], testCases: TestCase[]
     }
   }
   return [...new Set(issues)]
+}
+
+/**
+ * Reject generated specs that silently drop manual actions. This is intentionally
+ * conservative: navigation URLs are checked separately, action labels must appear
+ * in that case's executable test body, and every non-navigation step must have an
+ * awaited implementation call. Assertions must retain an assertion/validation call.
+ */
+function findManualStepCoverageIssues(changes: FileChange[], testCases: TestCase[]): string[] {
+  const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, '/')}`))
+  const issues: string[] = []
+  for (const testCase of testCases) {
+    const matchingBodies = specs.flatMap((spec) => {
+      const body = extractNamedTestBody(spec.newContent ?? '', testCase.title)
+      return body === undefined ? [] : [body]
+    })
+    if (matchingBodies.length !== 1) {
+      issues.push(`Could not verify one standalone test body for '${testCase.title}'. Generate one literal test('${testCase.title}', ...) block so every manual step can be checked.`)
+      continue
+    }
+
+    const body = matchingBodies[0]!
+    const executableCalls = [...body.matchAll(/\bawait\b/g)].length
+    const actions = testCase.steps.filter((step) => !extractStepUrl(step.action))
+    if (executableCalls < actions.length) {
+      issues.push(`Test '${testCase.title}' has ${executableCalls} awaited call(s) for ${actions.length} non-navigation manual step(s). Add an executable call for every step, in order.`)
+    }
+
+    const awaitedLines = body.split(/\r?\n/).filter((line) => /\bawait\b/.test(line))
+    const awaitedCalls = awaitedLines.flatMap((line) =>
+      [...line.matchAll(/\.\s*([A-Za-z_$][\w$]*)\s*\(/g)].map((match) => match[1] ?? ''),
+    )
+    const awaitedLocators = awaitedLines.flatMap((line) =>
+      [...line.matchAll(/\b(?:locators|locator)\.([A-Za-z_$][\w$]*)/g)].map((match) => match[1] ?? ''),
+    )
+    const bodyWords = new Set(normalizeCoverageText([...awaitedCalls, ...awaitedLocators].join(' ')).split(' ').filter(Boolean))
+    for (const step of actions) {
+      if (isLocatorAssertionStep(step.action)) {
+        if (!/\b(?:expect|assert|validate|verify|toBe|toHave|toContain)\w*/i.test(body)) {
+          issues.push(`Test '${testCase.title}' has no assertion or validation call for manual step ${step.order}: '${step.action}'.`)
+        }
+        continue
+      }
+      const target = parseReplayAction(step.action)?.target
+      const terms = target ? coverageTerms(target) : []
+      const missing = terms.filter((term) => !bodyWords.has(term))
+      if (missing.length > 0) {
+        issues.push(`Test '${testCase.title}' does not visibly implement manual step ${step.order}: '${step.action}'. Its target term(s) ${missing.join(', ')} are absent from that test body.`)
+      }
+    }
+  }
+  return [...new Set(issues)]
+}
+
+function extractNamedTestBody(source: string, title: string): string | undefined {
+  const pattern = new RegExp(`\\btest\\s*\\(\\s*(['\"\x60])${escapeRegExp(title)}\\1\\s*,[\\s\\S]*?=>\\s*\\{`)
+  const match = pattern.exec(source)
+  if (!match || match.index === undefined) return undefined
+  const openBrace = match.index + match[0].lastIndexOf('{')
+  const closeBrace = findMatchingBrace(source, openBrace)
+  return closeBrace < 0 ? undefined : source.slice(openBrace + 1, closeBrace)
+}
+
+/** Find the matching TypeScript brace while ignoring quoted strings and comments. */
+function findMatchingBrace(source: string, openBrace: number): number {
+  let depth = 0
+  let quote: "'" | '"' | '`' | undefined
+  let lineComment = false
+  let blockComment = false
+  for (let index = openBrace; index < source.length; index++) {
+    const char = source[index]!
+    const next = source[index + 1]
+    if (lineComment) {
+      if (char === '\n') lineComment = false
+      continue
+    }
+    if (blockComment) {
+      if (char === '*' && next === '/') { blockComment = false; index++ }
+      continue
+    }
+    if (quote) {
+      if (char === '\\') { index++; continue }
+      if (char === quote) quote = undefined
+      continue
+    }
+    if (char === '/' && next === '/') { lineComment = true; index++; continue }
+    if (char === '/' && next === '*') { blockComment = true; index++; continue }
+    if (char === "'" || char === '"' || char === '`') { quote = char; continue }
+    if (char === '{') depth++
+    if (char === '}' && --depth === 0) return index
+  }
+  return -1
+}
+
+function normalizeCoverageText(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(?:listing|listed)\b/g, 'list')
+    .trim()
+    .replace(/\s+/g, ' ')
+}
+
+function coverageTerms(value: string): string[] {
+  const ignored = new Set(['the', 'a', 'an', 'on', 'in', 'to', 'from', 'of', 'for', 'with', 'and', 'or', 'enter', 'fill', 'type', 'input', 'select', 'choose', 'side', 'sidebar', 'navigation', 'nav', 'menu', 'submenu', 'sub', 'item', 'button', 'link', 'icon', 'field', 'textbox', 'checkbox', 'radio', 'visible', 'displayed', 'shown', 'page', 'screen'])
+  return [...new Set(normalizeCoverageText(value)
+    .split(' ')
+    .map((word) => word === 'listing' ? 'list' : word)
+    .filter((word) => word.length > 1 && !ignored.has(word)))]
 }
 
 /** Keep an assertion locator tied to its own post-action snapshot, not an input control. */

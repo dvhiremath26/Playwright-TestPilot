@@ -60,6 +60,8 @@ export interface BrowserElementRef {
   name?: string
   /** Whether the element is actionable at snapshot time. */
   actionable?: boolean
+  /** Observed locator expression when the element was discovered from the live DOM. */
+  locatorExpression?: string
 }
 
 /** Options for snapshot/search calls that may need a time budget. */

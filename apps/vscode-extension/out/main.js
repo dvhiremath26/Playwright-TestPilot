@@ -70898,8 +70898,8 @@ var require_tmp = __commonJS({
       if (!_isUndefined(options.name)) {
         const name = options.name;
         if (path3.isAbsolute(name)) throw new Error(`name option must not contain an absolute path, found "${name}".`);
-        const basename2 = path3.basename(name);
-        if (basename2 === ".." || basename2 === "." || basename2 !== name) {
+        const basename3 = path3.basename(name);
+        if (basename3 === ".." || basename3 === "." || basename3 !== name) {
           throw new Error(`name option must not contain a path, found "${name}".`);
         }
       }
@@ -208356,9 +208356,9 @@ ${lanes.join("\n")}
             /*ignoreCase*/
             false
           )) {
-            const basename2 = getBaseFileName(a.fileName);
-            if (basename2 === "lib.d.ts" || basename2 === "lib.es6.d.ts") return 0;
-            const name = removeSuffix(removePrefix(basename2, "lib."), ".d.ts");
+            const basename3 = getBaseFileName(a.fileName);
+            if (basename3 === "lib.d.ts" || basename3 === "lib.es6.d.ts") return 0;
+            const name = removeSuffix(removePrefix(basename3, "lib."), ".d.ts");
             const index = libs.indexOf(name);
             if (index !== -1) return index + 1;
           }
@@ -272104,8 +272104,8 @@ ${options.prefix}` : "\n" : options.prefix
             }
           };
           for (const file of files) {
-            const basename2 = getBaseFileName(file);
-            if (basename2 === "package.json" || basename2 === "bower.json") {
+            const basename3 = getBaseFileName(file);
+            if (basename3 === "package.json" || basename3 === "bower.json") {
               createProjectWatcher(
                 file,
                 "FileWatcher"
@@ -275777,8 +275777,8 @@ All files are: ${JSON.stringify(names)}`,
               var _a;
               const fileOrDirectoryPath = removeIgnoredPath(this.toPath(fileOrDirectory));
               if (!fileOrDirectoryPath) return;
-              const basename2 = getBaseFileName(fileOrDirectoryPath);
-              if (((_a = result.affectedModuleSpecifierCacheProjects) == null ? void 0 : _a.size) && (basename2 === "package.json" || basename2 === "node_modules")) {
+              const basename3 = getBaseFileName(fileOrDirectoryPath);
+              if (((_a = result.affectedModuleSpecifierCacheProjects) == null ? void 0 : _a.size) && (basename3 === "package.json" || basename3 === "node_modules")) {
                 result.affectedModuleSpecifierCacheProjects.forEach((project) => {
                   var _a2;
                   (_a2 = project.getModuleSpecifierCache()) == null ? void 0 : _a2.clear();
@@ -287878,7 +287878,7 @@ async function generateChangesFromProvider(options) {
     title: testCase.title,
     values: extractManualTestData(testCase)
   }));
-  const manualTestData = dataCases.some((testCase) => Object.keys(testCase.values).length > 0) ? {
+  const manualTestData = manualCases.length > 0 ? {
     moduleName: scenarioStem,
     cases: dataCases,
     sharedFlow: casesShareFlow(manualCases, dataCases),
@@ -287886,6 +287886,7 @@ async function generateChangesFromProvider(options) {
     existingJson: readExistingJson(options.repositoryRoot, targetDataPath),
     dataTypesPath: "src/utils/testData/dataTypes.ts"
   } : void 0;
+  const multiScreenFlow = requiresMultipleScreenPages(manualCases);
   const targetSpecPath = manualCases.length > 1 ? `tests/${scenarioStem}.spec.ts` : existingTestPath ?? `tests/${stem}.spec.ts`;
   const browserEvidence = [
     ...selectRelevantBrowserCandidates(options.task.browserLocatorCandidates ?? []).map((candidate) => `Observed for step ${candidate.stepOrder ?? "unspecified"} on ${candidate.pageUrl ?? "an inspected screen"} via ${candidate.backend} at ${candidate.observedAt}: ref=${candidate.ref}, role=${candidate.role ?? "unknown"}, name=${candidate.name ?? "unnamed"}, locator=${candidate.expression}`),
@@ -287941,7 +287942,7 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
         manualTestData,
         browserEvidence,
         frameworkExamples: frameworkExamples.text
-      })
+      }) + renderScreenArchitectureRequirements(manualCases, targetPagePath, targetLocatorPath)
     }
   ];
   const modelId = options.config?.model ?? model?.id;
@@ -287960,16 +287961,17 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
     ...findFrameworkStandardIssues(changes2, frameworkExamples, facts.customFixtureUsed, approvedLocatorExpressions),
     ...findAssertionLocatorIssues(changes2, manualCases, options.task.browserLocatorCandidates ?? []),
     ...findManualNavigationIssues(changes2, manualCases),
-    ...findManualStepCoverageIssues(changes2, manualCases)
+    ...findManualStepCoverageIssues(changes2, manualCases),
+    ...findScreenPageArchitectureIssues(changes2, manualCases, options.repositoryRoot)
   ];
   let response = await provider.chat(messages, { purpose: "generate", modelId, signal: options.signal });
   recordGenerationCall(response.modelId);
   let changes = parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath });
   const maxCorrections = 2;
-  const needsCorrection = (candidate) => !hasSpec(candidate) || standardIssues(candidate).length > 0 || !!manualTestData && manualDataUsageIssues(candidate, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath).length > 0;
+  const needsCorrection = (candidate) => !hasSpec(candidate) || standardIssues(candidate).length > 0 || !!manualTestData && manualDataUsageIssues(candidate, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow).length > 0;
   for (let correction = 0; correction < maxCorrections && needsCorrection(changes); correction++) {
     const issues = standardIssues(changes);
-    const dataIssues = manualTestData ? manualDataUsageIssues(changes, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath) : [];
+    const dataIssues = manualTestData ? manualDataUsageIssues(changes, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow) : [];
     const correctionPrompt = [
       "Your previous response was rejected and no files have been written.",
       !hasSpec(changes) ? "It did not contain a runnable TypeScript test spec with a test(...) declaration." : "",
@@ -287979,6 +287981,7 @@ ${issues.map((issue) => `- ${issue}`).join("\n")}`] : [],
 ${dataIssues.map((issue) => `- ${issue}`).join("\n")}`] : [],
       "Return the complete file set again. Implement every manual step in order; the generated code does not need to repeat the manual wording verbatim. Correct every listed standards violation and copy the architecture from the real source examples where needed. For new page behavior, create page-object/locator code using matching browser observations; never invent a selector that is absent from evidence. Every new locator expression must exactly match an expression in the Playwright CLI observations or an indexed framework locator. For data-driven text assertions, a locator-class method may accept the expected value and use getByText(expectedValue) only when a literal getByText candidate for that assertion is present in the matching snapshot evidence; pass the value from the data row. If evidence is insufficient, do not invent a locator or leave a guessed CSS selector with an adjustment comment; keep the specific step unresolved and explain which live snapshot is missing.",
       "Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.",
+      renderScreenArchitectureRequirements(manualCases, targetPagePath, targetLocatorPath),
       "Output only fenced TypeScript file blocks with repository-relative paths, including a tests/*.spec.ts file."
     ].filter(Boolean).join("\n\n");
     response = await provider.chat([
@@ -288001,7 +288004,7 @@ ${remainingStandardsIssues.map((issue) => `- ${issue}`).join("\n")}`
     );
   }
   if (manualTestData) {
-    const dataUseIssues = manualDataUsageIssues(changes, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath);
+    const dataUseIssues = manualDataUsageIssues(changes, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow);
     if (dataUseIssues.length > 0) {
       throw new Error(`The selected Copilot model did not wire the extracted manual test data after two automatic correction attempts. No files were written:
 ${dataUseIssues.map((issue) => `- ${issue}`).join("\n")}`);
@@ -288036,7 +288039,7 @@ function reusableTestPath(task, analysis) {
   return sameCase ? decision.targetTestFile : void 0;
 }
 function deriveScenarioStem(task) {
-  const steps = task.testCase?.steps ?? [];
+  const steps = (task.testCase ?? task.testCases?.[0])?.steps ?? [];
   const click = steps.map((step) => step.action).find((action) => /^\s*click\b/i.test(action));
   const quotedClick = click?.match(/["']([^"']+)["']/)?.[1];
   const actionLabel = quotedClick ?? click?.replace(/^\s*click\s+(?:on\s+)?/i, "").replace(/[.!?]+$/, "");
@@ -288050,12 +288053,68 @@ function deriveScenarioStem(task) {
       return task.title || "manualScenario";
     }
   })();
-  const source = actionLabel || fallback;
+  const isAuthTransition = /^(?:continue|next|sign\s*in|log\s*in|submit)(?:\s+button)?$/i.test(actionLabel?.trim() ?? "") && steps.some((step) => /\b(?:username|user name|password)\b/i.test(step.action));
+  const source = isAuthTransition ? task.title || fallback : actionLabel || fallback;
   const words = source.replace(/([a-z0-9])([A-Z])/g, "$1 $2").match(/[A-Za-z0-9]+/g) ?? [];
   const stem = words.slice(0, 5).map(
     (word, index) => index === 0 ? word.charAt(0).toLowerCase() + word.slice(1) : word.charAt(0).toUpperCase() + word.slice(1)
   ).join("");
   return stem || "manualScenario";
+}
+function requiresMultipleScreenPages(cases) {
+  return cases.some((testCase) => {
+    const steps = testCase.steps.map((step) => step.action);
+    const transitionIndex = steps.findIndex(
+      (step) => /\b(?:link|submenu|sidebar\s+navigation|navigation\s+menu|menu\s+item|card|tile|next\s+page|new\s+screen)\b/i.test(step) || /\b(?:continue|sign\s*in|log\s*in|submit)\b/i.test(step)
+    );
+    return transitionIndex >= 0 && transitionIndex < steps.length - 2;
+  });
+}
+function renderScreenArchitectureRequirements(cases, targetPagePath, targetLocatorPath) {
+  if (!requiresMultipleScreenPages(cases)) return "";
+  return `
+
+## Screen-based page-object architecture
+
+Analyze the manual steps and step-scoped Playwright CLI snapshots to identify the actual screens and transitions. You are responsible for choosing accurate, descriptive page and locator class names and repository-relative paths from that evidence; do not use fixed page names supplied by TestPilot, and never name a page after a control or action such as ContinueButton. Create a separate framework-standard page class and paired locator class for each distinct screen, assign each action to the screen where it occurs, and have the spec call those page objects in flow order. The scenario's primary workflow page may use the stable shared paths ${targetPagePath} and ${targetLocatorPath}; name every additional screen page from its observed screen purpose and manual-step context. Keep multiple cases that share the same screens/actions on the same page and locator classes. Every page class must extend BasePage, delegate interactions through the discovered action facade, and have a matching *Locators class. The spec must import and use every page class. Use observed or indexed locators only.
+`;
+}
+function findScreenPageArchitectureIssues(changes, cases, repositoryRoot) {
+  const issues = [];
+  if (!requiresMultipleScreenPages(cases)) return issues;
+  const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, "/")}`));
+  const specSource = specs.map((spec) => spec.newContent ?? "").join("\n");
+  const generatedPageClasses = /* @__PURE__ */ new Set();
+  const pageImports = [...specSource.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]@pages\/([^'"]+\.page(?:\.tsx?)?)['"]/g)].flatMap((match) => {
+    const importPath = match[2];
+    const relativePath = `pages/${importPath.endsWith(".ts") ? importPath : `${importPath}.ts`}`;
+    return match[1].split(",").map((name) => name.trim().split(/\s+as\s+/)[0]).filter((name) => /Page$/.test(name)).map((className) => ({ className, relativePath }));
+  });
+  for (const { className, relativePath: pagePath } of pageImports) {
+    const generatedPage = changes.find((change) => change.path === pagePath);
+    const source = generatedPage?.newContent ?? ((0, import_node_fs7.existsSync)((0, import_node_path9.join)(repositoryRoot, pagePath)) ? (0, import_node_fs7.readFileSync)((0, import_node_path9.join)(repositoryRoot, pagePath), "utf-8") : "");
+    if (!source || !new RegExp(`export\\s+class\\s+${className}\\s+extends\\s+BasePage\\b`).test(source)) {
+      issues.push(`The imported page class ${className} must be exported from '${pagePath}' and extend BasePage.`);
+      continue;
+    }
+    generatedPageClasses.add(className);
+    if (/(?:Button|Field|Textbox|TextBox|Input|Link|Icon|Checkbox|Card|Tile)Page$/.test(className)) {
+      issues.push(`${pagePath} names a page class after a control rather than a screen; choose a descriptive screen/page name from the manual steps and browser evidence.`);
+    }
+    const locatorPath = pagePath.replace(/\.page\.tsx?$/i, ".locators.ts");
+    const locator = changes.find((change) => change.path === locatorPath);
+    const locatorSource = locator?.newContent ?? ((0, import_node_fs7.existsSync)((0, import_node_path9.join)(repositoryRoot, locatorPath)) ? (0, import_node_fs7.readFileSync)((0, import_node_path9.join)(repositoryRoot, locatorPath), "utf-8") : "");
+    if (!locatorSource || !/export\s+class\s+\w+Locators\b/.test(locatorSource) || !new RegExp(`from\\s+['"]\\./${(0, import_node_path9.basename)(locatorPath).replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}['"]`).test(source)) {
+      issues.push(`${pagePath} must have a paired locator class in '${locatorPath}' and import that class.`);
+    }
+    if (!new RegExp(`new\\s+${className}\\s*\\(`).test(specSource)) {
+      issues.push(`The generated spec must import and instantiate ${className} for its screen.`);
+    }
+  }
+  if (generatedPageClasses.size < 2) {
+    issues.push("This flow crosses screens, but only one page class was generated. Create separate page/locator pairs for the screens, naming each from the manual steps and snapshot evidence.");
+  }
+  return issues;
 }
 function caseDataKey(title) {
   return title.replace(/[^a-zA-Z0-9]+/g, " ").trim().split(/\s+/).slice(0, 6).map((word, index) => index === 0 ? word.charAt(0).toLowerCase() + word.slice(1) : word.charAt(0).toUpperCase() + word.slice(1)).join("") || "manualCase";
@@ -288063,10 +288122,10 @@ function caseDataKey(title) {
 function extractManualTestData(testCase) {
   const values = {};
   for (const step of testCase.steps) {
-    const match = step.action.match(/\b(?:fill|enter|type)\s+["']([^"']+)["']\s+(?:in|into|to)\s+(?:the\s+)?(.+?)\s*[.!]?$/i);
+    const match = step.action.match(/\b(?:fill|enter|type)\s+(?:["']([^"']+)["']|(.+?))\s+(?:in|into|to)\s+(?:the\s+)?(.+?)\s*[.!]?$/i);
     if (!match) continue;
-    const value = match[1].trim();
-    const target = match[2].replace(/\b(?:text\s*box|textbox|input|field|text field)\b/gi, " ").replace(/\b(?:enter|input)\b/gi, " ").replace(/\s+/g, " ").trim();
+    const value = (match[1] ?? match[2] ?? "").trim();
+    const target = match[3].replace(/\b(?:text\s*box|textbox|input|field|text field)\b/gi, " ").replace(/\b(?:enter|input)\b/gi, " ").replace(/\s+/g, " ").trim();
     const words = target.match(/[A-Za-z0-9]+/g) ?? [];
     const key = words.map((word, index) => index === 0 ? word.charAt(0).toLowerCase() + word.slice(1) : word.charAt(0).toUpperCase() + word.slice(1)).join("");
     if (!key || /password|secret|token|credential|apiKey/i.test(key)) continue;
@@ -288094,7 +288153,7 @@ function readExistingJson(repositoryRoot, relativePath) {
   if (!(0, import_node_fs7.existsSync)(path3)) return void 0;
   return (0, import_node_fs7.readFileSync)(path3, "utf-8").slice(0, 12e3);
 }
-function manualDataUsageIssues(changes, data, repositoryRoot, targetPagePath, targetLocatorPath, expectedDataLoaderImportPath) {
+function manualDataUsageIssues(changes, data, repositoryRoot, targetPagePath, targetLocatorPath, expectedDataLoaderImportPath, multiScreenFlow = false) {
   const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, "/")}`));
   if (specs.length === 0) return ["No spec was returned to verify DataLoader usage."];
   const issues = [];
@@ -288163,7 +288222,7 @@ function manualDataUsageIssues(changes, data, repositoryRoot, targetPagePath, ta
       if (!presentOnDisk && !presentInProposal) issues.push(`The shared scenario file '${target}' is missing; return it at this exact path.`);
     }
     for (const change of changes) {
-      if (/^pages\/.+\.(?:page|locators)\.tsx?$/.test(change.path) && change.path !== targetPagePath && change.path !== targetLocatorPath) {
+      if (!multiScreenFlow && /^pages\/.+\.(?:page|locators)\.tsx?$/.test(change.path) && change.path !== targetPagePath && change.path !== targetLocatorPath) {
         issues.push(`${change.path} duplicates scenario assets for a shared flow; use shared paths '${targetPagePath}' and '${targetLocatorPath}'.`);
       }
     }

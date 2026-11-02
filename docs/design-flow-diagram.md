@@ -139,6 +139,12 @@ Verified in the current workspace:
 - VS Code extension build 0.1.64 launches the primary Playwright CLI browser in headed mode, so
   SSO/MFA number-matching screens are visible. The CLI session remains unique and non-persistent;
   Playwright MCP remains headed by default and isolated.
+- VS Code extension build 0.1.65 requires screen-specific page/locator classes for authenticated
+  multi-screen flows. It also always creates a DataLoader-compatible scenario JSON module for
+  manual cases.
+- VS Code extension build 0.1.66 lets the selected model name screen page/locator classes from the
+  manual steps and browser evidence; validation checks that multi-screen flows have separate,
+  paired framework page/locator classes without prescribing fixed screen names.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of
   `npm run check` and is not called by the extension generation path.
 - The last recorded full check passed 154 tests before the latest model-generation changes;

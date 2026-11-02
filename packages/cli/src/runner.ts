@@ -33,7 +33,7 @@ import { snapshotRepository } from './apply.ts'
 import { getProvider, buildConfig } from '@tcoe/provider-abstraction'
 import type { ProviderConfig, VscodeLmBridge } from '@tcoe/provider-abstraction'
 import { buildEmissionOptions, emitFrameworkStandard } from '@tcoe/browser-tools'
-import type { BrowserEvidence, BrowserElementRef, BrowserSession } from '@tcoe/browser-tools'
+import type { BrowserEvidence, BrowserElementRef, BrowserSession, BrowserSnapshot } from '@tcoe/browser-tools'
 import type { EmissionOptions } from '@tcoe/browser-tools'
 
 export interface RunOptions {
@@ -322,7 +322,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
                     content: JSON.stringify({
                       manualStep: stepAction,
                       requiredAction: actionKind,
-                      observedSnapshotElements: candidateShortlist.map(({ ref, role, name }) => ({ ref, role, name })),
+                      observedSnapshotElements: candidateShortlist.map(({ ref, role, name, context, navigation }) => ({ ref, role, name, context, navigation })),
                     }),
                   },
                 ]
@@ -348,7 +348,16 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
                   const backend = options.browser?.provenance?.backendLabel ?? 'browser'
                   throw new SnapshotTargetUnavailableError(`The selected model returned ref "${selected.ref}", which is not a unique element in the ${backend} snapshot.`)
                 }
-                return match[0]!
+                const selectedElement = match[0]!
+                const semanticScore = Math.max(
+                  textMatchScore(normalizeWords(selectedElement.name ?? ''), normalizeWords(targetText)),
+                  textMatchScore(normalizeWords(selectedElement.context ?? ''), normalizeWords(targetText)) * 0.85,
+                )
+                if (isSidebarNavigationStep(stepAction) && semanticScore < 0.35) {
+                  const backend = options.browser?.provenance?.backendLabel ?? 'browser'
+                  throw new SnapshotTargetUnavailableError(`The ${backend} model selected a generic navigation element without a label or context tying it to "${targetText}".`)
+                }
+                return selectedElement
               }
             : undefined,
           signal: options.signal,
@@ -501,7 +510,7 @@ export async function gatherEvidenceForTestCase(
   }
 
   try {
-  for (const step of options.steps) {
+  for (const [stepIndex, step] of options.steps.entries()) {
     if (options.signal?.aborted) throw new Error('Browser step replay was cancelled.')
 
     const explicitUrl = extractStepUrl(step.action)
@@ -549,6 +558,7 @@ export async function gatherEvidenceForTestCase(
     } else if (!action && isLocatorAction(step.action)) {
       throw new Error(`Step ${step.order} could not be replayed safely: unsupported browser action "${step.action}". No later screen evidence was collected.`)
     }
+    let sidebarTrialForStep: Awaited<ReturnType<typeof retrySidebarNavigationCandidates>> | undefined
     if (action) {
       let compatibleTargets = findActionTargets(
         snapshot,
@@ -567,7 +577,12 @@ export async function gatherEvidenceForTestCase(
         action.kind === 'click' && Boolean(action.intent),
       )[0]?.score ?? 0
       if (bestSnapshotScore < 0.35) {
-        const domElements = await inspectVisibleDomTargets(browser, action.target, options.signal)
+        const domElements = await inspectVisibleDomTargets(
+          browser,
+          action.target,
+          options.signal,
+          isSidebarNavigationStep(step.action),
+        )
         if (domElements.length > 0) {
           const existingRefs = new Set(snapshot.elements.map((element) => element.ref))
           const newElements = domElements.filter((element) => !existingRefs.has(element.ref))
@@ -606,14 +621,32 @@ export async function gatherEvidenceForTestCase(
           ).map((candidate) => candidate.element)
         }
       }
-      const target = options.selectSnapshotTarget
-        ? await options.selectSnapshotTarget(step.action, action.kind, compatibleTargets, options.signal)
-        : findActionTarget(snapshot, action.target, action.kind)
+      const preActionSnapshot = snapshot
+      let target: BrowserElementRef | undefined
+      if (options.selectSnapshotTarget) {
+        try {
+          target = await options.selectSnapshotTarget(step.action, action.kind, compatibleTargets, options.signal)
+        } catch (error) {
+          if (!(error instanceof SnapshotTargetUnavailableError) || !options.fallbackRetry ||
+              !isSidebarNavigationRetryEligible(step.action, action, options.steps[stepIndex + 1])) {
+            throw error
+          }
+          sidebarTrialForStep = await retrySidebarNavigationCandidates(stepIndex, action, snapshot, currentUrl)
+          if (sidebarTrialForStep) target = sidebarTrialForStep.target
+          else throw new SnapshotTargetUnavailableError(`${error.message} No grounded sidebar candidate could be confirmed by the next expected screen element.`)
+        }
+      } else {
+        target = findActionTarget(snapshot, action.target, action.kind)
+      }
+      if (!target && options.fallbackRetry && isSidebarNavigationRetryEligible(step.action, action, options.steps[stepIndex + 1])) {
+        sidebarTrialForStep = await retrySidebarNavigationCandidates(stepIndex, action, snapshot, currentUrl)
+        if (sidebarTrialForStep) target = sidebarTrialForStep.target
+      }
       // Never turn unrelated controls from the same page into evidence for a
       // requested target that could not be matched uniquely.
       const candidateElements = target ? [target] : []
       locatorCandidates.push(...await candidatesForStep(
-        snapshot,
+        preActionSnapshot,
         step.order,
         step.action,
         currentUrl,
@@ -621,12 +654,12 @@ export async function gatherEvidenceForTestCase(
       ))
 
       if (!target) {
-        throw new Error(`Step ${step.order} could not be replayed safely: no unique ${action.kind === 'fill' ? 'editable control' : 'control'} matching "${action.target}" was found in the current Playwright snapshot. No later screen evidence was collected.`)
+        throw new SnapshotTargetUnavailableError(`Step ${step.order} could not be replayed safely: no unique ${action.kind === 'fill' ? 'editable control' : 'control'} matching "${action.target}" was found in the current browser evidence. No later screen evidence was collected.`)
       }
       if (action.kind === 'fill' && !action.value) {
         throw new Error(`Step ${step.order} could not be replayed safely: no input value was found for "${action.target}".`)
       }
-      const result = await browser.execute(
+      const result = sidebarTrialForStep?.result ?? await browser.execute(
         async (tool, callOptions) => {
           switch (action.kind) {
             case 'fill': return tool.fill(target.ref, action.value!, callOptions)
@@ -646,19 +679,24 @@ export async function gatherEvidenceForTestCase(
       if (!result.ok && !clickTriggeredNavigationWaitTimeout) {
         throw new Error(`Step ${step.order} could not be replayed safely: ${result.error ?? 'browser action failed'}. No later screen evidence was collected.`)
       }
-      await waitForPageReady(`Step ${step.order} action`)
+      if (!sidebarTrialForStep) await waitForPageReady(`Step ${step.order} action`)
       evidence.push({
         kind: 'interaction',
-        detail: clickTriggeredNavigationWaitTimeout
+        detail: sidebarTrialForStep
+          ? `Step ${step.order} selected sidebar locator ${target.ref} after candidate attempt ${sidebarTrialForStep.attempt}; the following step's target was visible: ${step.action}`
+          : clickTriggeredNavigationWaitTimeout
           ? `Step ${step.order} click completed, but the CLI timed out waiting for the scheduled navigation; the flow continued without repeating the click: ${step.action}`
           : `Step ${step.order} replayed: ${step.action}`,
         source: result.provenance ?? browser.provenance ?? navigation.source,
       })
-      const location = await browser.execute(
+      const location = sidebarTrialForStep ? undefined : await browser.execute(
         (tool, callOptions) => tool.eval('() => window.location.href', undefined, callOptions),
         { signal: options.signal },
       )
-      if (location.ok && location.output) {
+      if (sidebarTrialForStep) {
+        currentUrl = sidebarTrialForStep.url
+        snapshot = sidebarTrialForStep.snapshot
+      } else if (location?.ok && location.output) {
         const observedUrl = extractStepUrl(location.output)
         if (observedUrl) currentUrl = observedUrl
       }
@@ -666,7 +704,9 @@ export async function gatherEvidenceForTestCase(
 
     // Snapshot after every step. The next step's locator candidates therefore
     // come from the screen that is actually visible at that point in the flow.
-    snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl)
+    if (!sidebarTrialForStep) {
+      snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl)
+    }
   }
   } catch (error) {
     if (error instanceof SnapshotTargetUnavailableError && !options.fallbackRetry) {
@@ -707,6 +747,111 @@ export async function gatherEvidenceForTestCase(
         source: ready.provenance,
       })
     }
+  }
+
+  async function retrySidebarNavigationCandidates(
+    stepIndex: number,
+    action: ReplayAction,
+    checkpoint: BrowserSnapshot,
+    checkpointUrl: string,
+  ): Promise<{
+    target: BrowserElementRef
+    result: Awaited<ReturnType<BrowserSession['execute']>>
+    snapshot: BrowserSnapshot
+    url: string
+    attempt: number
+  } | undefined> {
+    if (action.kind !== 'click') return undefined
+    const nextStep = options.steps.slice(stepIndex + 1).find((candidate) => !extractStepUrl(candidate.action))
+    const expectedNext = nextStep ? parseReplayAction(nextStep.action) : undefined
+    if (!nextStep || !expectedNext) return undefined
+
+    const candidateScore = (element: BrowserElementRef): number => Math.max(
+      textMatchScore(normalizeWords(element.name ?? ''), normalizeWords(action.target)),
+      textMatchScore(normalizeWords(element.context ?? ''), normalizeWords(action.target)) * 0.85,
+    )
+    const candidates = checkpoint.elements
+      .filter((element) => element.actionable !== false && element.navigation && element.locatorExpression)
+      .filter((element) => /^(?:link|menuitem|treeitem|tab|button|generic)$/i.test(element.role ?? 'generic'))
+      .sort((a, b) => candidateScore(b) - candidateScore(a))
+      .slice(0, 4)
+    if (candidates.length === 0) return undefined
+
+    const checkpointSignature = browserSnapshotSignature(checkpoint)
+    const readUrl = async (): Promise<string> => {
+      const observed = await browser.execute(
+        (tool, callOptions) => tool.eval('() => window.location.href', undefined, callOptions),
+        { signal: options.signal },
+      )
+      return observed.ok && observed.output ? extractStepUrl(observed.output) ?? checkpointUrl : checkpointUrl
+    }
+    const restoreCheckpoint = async (): Promise<boolean> => {
+      const back = await browser.execute(
+        (tool, callOptions) => tool.eval('() => { history.back(); return "restore requested" }', undefined, callOptions),
+        { signal: options.signal },
+      )
+      if (!back.ok) return false
+      try { await waitForPageReady('Restore after an unverified sidebar candidate') } catch { return false }
+      const restoredUrl = await readUrl()
+      const restoredSnapshot = await browser.capture(undefined, { signal: options.signal })
+      if (!restoredSnapshot) return false
+      snapshot = restoredSnapshot
+      currentUrl = restoredUrl
+      return normalizeUrl(restoredUrl) === normalizeUrl(checkpointUrl) &&
+        browserSnapshotSignature(restoredSnapshot) === checkpointSignature
+    }
+
+    let attempts = 0
+    for (const candidate of candidates) {
+      if (options.signal?.aborted) throw new Error('Sidebar candidate retry was cancelled.')
+      attempts++
+      const result = await browser.execute(
+        (tool, callOptions) => tool.click(candidate.ref, callOptions),
+        { signal: options.signal },
+      )
+      const completedDespiteTimeout = !result.ok && isClickNavigationWaitTimeout(result.error)
+      if (result.ok || completedDespiteTimeout) {
+        try { await waitForPageReady(`Sidebar candidate ${attempts} navigation`) } catch { /* inspect before deciding whether to restore */ }
+      }
+
+      const observedUrl = await readUrl()
+      const after = await browser.capture(undefined, { signal: options.signal })
+      if (!after) {
+        if (!(await restoreCheckpoint())) {
+          throw new SnapshotTargetUnavailableError(`Sidebar candidate ${attempts} left the browser in an unknown state; stopped before trying another control.`)
+        }
+        continue
+      }
+
+      if (result.ok || completedDespiteTimeout) {
+        const nextDom = await inspectVisibleDomTargets(
+          browser,
+          expectedNext.target,
+          options.signal,
+          isSidebarNavigationStep(nextStep.action),
+        )
+        const afterWithDom = { ...after, elements: [...after.elements, ...nextDom] }
+        const expectedTarget = findActionTarget(afterWithDom, expectedNext.target, expectedNext.kind)
+        if (expectedTarget) {
+          snapshot = afterWithDom
+          currentUrl = observedUrl
+          evidence.push({
+            kind: 'snapshot',
+            detail: `Step ${stepIndex + 1} candidate ${attempts} was confirmed because the next manual step target "${expectedNext.target}" appeared in the resulting screen.`,
+            source: browser.provenance ?? navigation.source,
+          })
+          return { target: candidate, result, snapshot: afterWithDom, url: observedUrl, attempt: attempts }
+        }
+      }
+
+      const noStateChange = normalizeUrl(observedUrl) === normalizeUrl(checkpointUrl) &&
+        browserSnapshotSignature(after) === checkpointSignature
+      if (noStateChange) continue
+      if (!(await restoreCheckpoint())) {
+        throw new SnapshotTargetUnavailableError(`Sidebar candidate ${attempts} did not reveal '${expectedNext.target}', and TestPilot could not verify that the original screen was restored. Stopped before trying another control.`)
+      }
+    }
+    return undefined
   }
 
   async function candidatesForStep(
@@ -760,6 +905,7 @@ async function inspectVisibleDomTargets(
   browser: BrowserSession,
   requestedTarget: string,
   signal?: AbortSignal,
+  includeSidebarCandidates = false,
 ): Promise<BrowserElementRef[]> {
   const inspected = await browser.execute(
     (tool, callOptions) => tool.eval(`() => {
@@ -769,6 +915,10 @@ async function inspectVisibleDomTargets(
         for (const node of roots[index].querySelectorAll('*')) {
           if (node.shadowRoot) roots.push(node.shadowRoot);
         }
+      }
+      const idCounts = new Map();
+      for (const root of roots) {
+        for (const node of root.querySelectorAll('[id]')) idCounts.set(node.id, (idCounts.get(node.id) || 0) + 1);
       }
       const seen = new Set();
       return roots.flatMap((root) => Array.from(root.querySelectorAll(selector))).filter((el) => {
@@ -782,9 +932,22 @@ async function inspectVisibleDomTargets(
         const explicitRole = el.getAttribute('role');
         const classes = typeof el.className === 'string' ? el.className : '';
         const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : 'generic');
-        const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
-        return { role, name };
-      }).filter((item) => item.name && item.name.length > 1).slice(0, 100);
+        const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
+        const control = core && el.id ? core.byId(el.id) : undefined;
+        const ui5Labels = ['getText', 'getTitle', 'getTooltip', 'getAccessibleName', 'getAriaLabel', 'getHeaderText', 'getLabel'].map((method) => {
+          try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
+        }).filter((value) => typeof value === 'string' && value.trim());
+        const labelledBy = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map((id) => {
+          const root = el.getRootNode();
+          const label = root.getElementById ? root.getElementById(id) : el.ownerDocument.getElementById(id);
+          return label ? (label.innerText || label.textContent || '') : '';
+        }).join(' ').trim();
+        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('title') || ui5Labels[0] || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+        const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
+        const parentTexts = [el.parentElement, el.parentElement && el.parentElement.parentElement].filter(Boolean).map((parent) => (parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean);
+        const context = [...new Set([parentTexts[0], parentTexts[1], control && control.getMetadata && control.getMetadata().getName()].filter(Boolean))].join(' | ').slice(0, 180);
+        return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), context, navigation: Boolean(nav) };
+      }).filter((item) => item.name && (item.name.length > 1 || item.navigation)).slice(0, 160);
     }`, undefined, callOptions),
     { signal },
   )
@@ -793,10 +956,16 @@ async function inspectVisibleDomTargets(
   const rows = parseEvaluatedDomRows(inspected.output)
   const wanted = normalizeWords(requestedTarget)
   const matching = rows
-    .map((row) => ({ ...row, score: textMatchScore(normalizeWords(row.name), wanted) }))
-    .filter((row) => row.score >= 0.35)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 20)
+    .map((row) => ({
+      ...row,
+      score: Math.max(
+        textMatchScore(normalizeWords(row.name), wanted),
+        textMatchScore(normalizeWords(row.context ?? ''), wanted) * 0.85,
+      ),
+    }))
+    .filter((row) => row.score >= 0.35 || (includeSidebarCandidates && row.navigation && row.id && row.uniqueId))
+    .sort((a, b) => b.score - a.score || Number(b.navigation) - Number(a.navigation))
+    .slice(0, includeSidebarCandidates ? 24 : 20)
 
   const counts = new Map<string, number>()
   for (const row of matching) {
@@ -805,20 +974,27 @@ async function inspectVisibleDomTargets(
   }
 
   return matching.flatMap((row) => {
-    // Identical role/name targets need more context than this fallback has. Keep
-    // them unresolved instead of emitting an ambiguous locator.
-    if ((counts.get(`${row.role ?? ''}\u0000${row.name}`) ?? 0) !== 1) return []
-    const expression = row.role && row.role !== 'generic'
+    const duplicateName = (counts.get(`${row.role ?? ''}\u0000${row.name}`) ?? 0) !== 1
+    // Use the observed element id to distinguish repeated Fiori controls. Without
+    // a unique id, identical role/name matches remain ambiguous and are excluded.
+    if (duplicateName && !row.uniqueId) return []
+    const useObservedId = duplicateName || (includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35)
+    const css = row.id ? `[id=${JSON.stringify(row.id)}]` : undefined
+    const expression = useObservedId && css
+      ? `locator(${JSON.stringify(css)})`
+      : row.role && row.role !== 'generic'
       ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })`
       : `getByText(${JSON.stringify(row.name)}, { exact: true })`
-    const selector = row.role && row.role !== 'generic'
+    const selector = useObservedId && css
+      ? `css=${css}`
+      : row.role && row.role !== 'generic'
       ? `role=${row.role}[name=${JSON.stringify(row.name)}]`
       : `text=${JSON.stringify(row.name)}`
-    return [{ ref: selector, role: row.role, name: row.name, actionable: true, locatorExpression: expression }]
+    return [{ ref: selector, role: row.role, name: row.name, actionable: true, locatorExpression: expression, context: row.context, navigation: row.navigation }]
   })
 }
 
-function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: string }> {
+function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: string; id?: string; uniqueId?: boolean; context?: string; navigation?: boolean }> {
   const start = output.indexOf('[')
   const end = output.lastIndexOf(']')
   if (start < 0 || end <= start) return []
@@ -827,9 +1003,16 @@ function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: str
     if (!Array.isArray(value)) return []
     return value.flatMap((item) => {
       if (!item || typeof item !== 'object') return []
-      const row = item as { role?: unknown; name?: unknown }
+      const row = item as { role?: unknown; name?: unknown; id?: unknown; uniqueId?: unknown; context?: unknown; navigation?: unknown }
       if (typeof row.name !== 'string' || !row.name.trim()) return []
-      return [{ role: typeof row.role === 'string' ? row.role : undefined, name: row.name.trim() }]
+      return [{
+        role: typeof row.role === 'string' ? row.role : undefined,
+        name: row.name.trim(),
+        id: typeof row.id === 'string' ? row.id : undefined,
+        uniqueId: row.uniqueId === true,
+        context: typeof row.context === 'string' ? row.context : undefined,
+        navigation: row.navigation === true,
+      }]
     })
   } catch {
     return []
@@ -1024,14 +1207,21 @@ function rankSnapshotElements(elements: BrowserElementRef[], terms: string[]): B
   const wanted = terms.map(normalizeWords).filter(Boolean).join(' ')
   const wantedTokens = new Set(wanted.split(' ').filter(Boolean))
   return elements
-    .filter((element) => element.name)
+    .filter((element) => element.name || element.context)
     .map((element) => {
       const name = normalizeWords(element.name ?? '')
+      const context = normalizeWords(element.context ?? '')
       const tokens = name.split(' ').filter(Boolean)
       const overlap = tokens.filter((token) => wantedTokens.has(token)).length
-      const score = name === wanted ? 1 : name.includes(wanted) || wanted.includes(name)
+      const nameScore = name === wanted ? 1 : name.includes(wanted) || wanted.includes(name)
         ? 0.9
         : overlap / Math.max(wantedTokens.size, tokens.length, 1)
+      const contextTokens = context.split(' ').filter(Boolean)
+      const contextOverlap = contextTokens.filter((token) => wantedTokens.has(token)).length
+      const contextScore = context === wanted ? 0.95 : context.includes(wanted)
+        ? 0.9
+        : contextOverlap / Math.max(wantedTokens.size, contextTokens.length, 1)
+      const score = Math.max(nameScore, contextScore * 0.85)
       return { element, score }
     })
     .sort((a, b) => b.score - a.score)
@@ -1043,8 +1233,36 @@ function normalizeWords(value: string): string {
   return value.toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\b(?:please|your|the|a|an)\b/g, ' ')
+    .replace(/\blisting\b/g, 'list')
     .trim()
     .replace(/\s+/g, ' ')
+}
+
+function isSidebarNavigationStep(action: string): boolean {
+  return /\b(?:sidebar|side\s*bar|navigation|nav(?:igation)?\s+menu)\b/i.test(action)
+}
+
+function isSidebarNavigationRetryEligible(
+  stepText: string,
+  action: ReplayAction,
+  nextStep: TestCase['steps'][number] | undefined,
+): boolean {
+  return action.kind === 'click' &&
+    isSidebarNavigationStep(stepText) &&
+    Boolean(nextStep && !extractStepUrl(nextStep.action) && parseReplayAction(nextStep.action))
+}
+
+function browserSnapshotSignature(snapshot: BrowserSnapshot): string {
+  const raw = snapshot.raw
+    .replace(/\[ref=[^\]]+\]/g, '')
+    .replace(/\["e[A-Za-z0-9_-]+"\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const elements = snapshot.elements
+    .map((element) => `${element.role ?? ''}:${element.name ?? ''}:${element.context ?? ''}`)
+    .sort()
+    .join('|')
+  return `${raw}|${elements}`
 }
 
 /** Thrown when the manual input cannot be turned into a test case. */

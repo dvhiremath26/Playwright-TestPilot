@@ -62,6 +62,10 @@ export interface BrowserElementRef {
   actionable?: boolean
   /** Observed locator expression when the element was discovered from the live DOM. */
   locatorExpression?: string
+  /** Nearby DOM/SAPUI5 context that helps distinguish repeated navigation controls. */
+  context?: string
+  /** True only when the visible element is nested in an observed navigation container. */
+  navigation?: boolean
 }
 
 /** Options for snapshot/search calls that may need a time budget. */

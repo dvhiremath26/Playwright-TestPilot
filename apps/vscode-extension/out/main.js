@@ -288197,12 +288197,18 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
     ...findManualStepCoverageIssues(changes2, manualCases),
     ...findScreenPageArchitectureIssues(changes2, manualCases, options.repositoryRoot)
   ];
+  const normalizeGeneratedChanges = (changes2) => {
+    const withObservedFrames = rewriteObservedFrameLocators(rewriteDirectPageActions(
+      changes2,
+      facts.actionMethods
+    ), options.task.browserLocatorCandidates ?? []);
+    return manualTestData ? rewriteHardcodedManualData(withObservedFrames, manualTestData) : withObservedFrames;
+  };
   let response = await provider.chat(messages, { purpose: "generate", modelId, signal: options.signal });
   recordGenerationCall(response.modelId);
-  let changes = rewriteObservedFrameLocators(rewriteDirectPageActions(
-    parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath }),
-    facts.actionMethods
-  ), options.task.browserLocatorCandidates ?? []);
+  let changes = normalizeGeneratedChanges(
+    parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath })
+  );
   const maxCorrections = 2;
   const needsCorrection = (candidate) => !hasSpec(candidate) || standardIssues(candidate).length > 0 || !!manualTestData && manualDataUsageIssues(candidate, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow).length > 0;
   for (let correction = 0; correction < maxCorrections && needsCorrection(changes); correction++) {
@@ -288235,10 +288241,9 @@ ${dataIssues.map((issue) => `- ${issue}`).join("\n")}`] : [],
       { role: "user", content: correctionPrompt }
     ], { purpose: "generate", modelId, signal: options.signal });
     recordGenerationCall(response.modelId);
-    changes = rewriteObservedFrameLocators(rewriteDirectPageActions(
-      parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath }),
-      facts.actionMethods
-    ), options.task.browserLocatorCandidates ?? []);
+    changes = normalizeGeneratedChanges(
+      parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath })
+    );
   }
   if (!hasSpec(changes)) {
     const parsed = changes.length > 0 ? `Parsed file blocks: ${changes.map((change) => change.path).join(", ")}; none contained a tests/*.spec.ts file with a test(...) declaration.` : "No repository-relative TypeScript file blocks could be parsed from the model reply.";
@@ -288480,6 +288485,55 @@ function applyDirectJsonDataFallback(changes, data) {
     };
   });
 }
+function rewriteHardcodedManualData(changes, data) {
+  return changes.map((change) => {
+    if (!/(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, "/")}`) || !change.newContent) return change;
+    let source = change.newContent;
+    let updated = false;
+    for (const testCase of data.cases) {
+      const titlePattern = new RegExp(`\\btest\\s*\\(\\s*(['"\\x60])${escapeRegExp(testCase.title)}\\1`);
+      const titleMatch = titlePattern.exec(source);
+      if (!titleMatch) continue;
+      const start = titleMatch.index;
+      const tailStart = start + titleMatch[0].length;
+      const nextTest = source.slice(tailStart).search(/\n\s*test\s*\(/);
+      const end = nextTest < 0 ? source.length : tailStart + nextTest;
+      let block = source.slice(start, end);
+      let rowExpression;
+      const dataLoaderImport = /import\s+\{\s*DataLoader\s*\}\s+from\s+['"][^'"]+['"]/.test(source);
+      if (dataLoaderImport) {
+        const moduleGetter = `DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)`;
+        const indexedDeclaration = source.match(new RegExp(
+          `\\b(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${moduleGetter}\\s*\\[\\s*['"]${escapeRegExp(testCase.caseKey)}['"]\\s*\\]`
+        ))?.[1];
+        const rootDeclaration = source.match(new RegExp(
+          `\\b(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${moduleGetter}(?!\\s*\\[)`
+        ))?.[1];
+        rowExpression = indexedDeclaration ?? (rootDeclaration ? `${rootDeclaration}['${testCase.caseKey}']` : `DataLoader.get('${data.moduleName}')['${testCase.caseKey}']`);
+      } else {
+        const jsonImport = source.match(new RegExp(`import\\s+(${escapeRegExp(`${data.moduleName}Json`)})\\s+from\\s+['"][^'"]+['"]`))?.[1];
+        if (jsonImport) rowExpression = `${jsonImport}['${testCase.caseKey}']`;
+      }
+      if (!rowExpression) continue;
+      for (const [key, value] of Object.entries(testCase.values)) {
+        if (value.length < 3) continue;
+        const literal = new RegExp(`(['"\\x60])${escapeRegExp(value)}\\1`, "g");
+        const replaced = block.replace(literal, `${rowExpression}.${key}`);
+        if (replaced !== block) {
+          updated = true;
+          block = replaced;
+        }
+      }
+      source = source.slice(0, start) + block + source.slice(end);
+    }
+    return updated ? {
+      ...change,
+      newContent: source,
+      reason: `${change.reason ?? ""} Replaced hardcoded manual inputs with their extracted typed test-data fields.`.trim(),
+      evidence: [...change.evidence ?? [], "Manual input literals in each test block now reference the corresponding extracted JSON case row."]
+    } : change;
+  });
+}
 function manualDataUsageIssues(changes, data, repositoryRoot, targetPagePath, targetLocatorPath, expectedDataLoaderImportPath, multiScreenFlow = false, accessMode = "data-loader") {
   const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, "/")}`));
   if (specs.length === 0) return ["No spec was returned to verify DataLoader usage."];
@@ -288545,7 +288599,7 @@ function manualDataUsageIssues(changes, data, repositoryRoot, targetPagePath, ta
       if (!combinedSource.includes(`.${key}`) && !combinedSource.includes(`['${key}']`) && !combinedSource.includes(`["${key}"]`)) {
         issues.push(`The generated spec set must pass the '${key}' value from the '${testCase.caseKey}' row to page actions/assertions.`);
       }
-      if (value.length >= 3 && generatedCode.includes(value)) {
+      if (value.length >= 3 && containsQuotedStringLiteral(generatedCode, value)) {
         issues.push(`Generated TypeScript hardcodes '${value}' instead of reading it from the test-data JSON.`);
       }
     }
@@ -288563,6 +288617,9 @@ function manualDataUsageIssues(changes, data, repositoryRoot, targetPagePath, ta
     }
   }
   return issues;
+}
+function containsQuotedStringLiteral(source, value) {
+  return new RegExp(`(['"\\x60])${escapeRegExp(value)}\\1`).test(source);
 }
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

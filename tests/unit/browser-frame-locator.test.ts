@@ -1,0 +1,76 @@
+import { describe, expect, it } from 'vitest'
+import { rewriteObservedFrameLocators } from '../../packages/cli/src/runner'
+import type { FileChange, VerifiedLocator } from '../../packages/shared-types/src/agent'
+
+const observedAt = '2026-11-03T00:00:00.000Z'
+
+function observed(expression: string, role: string, name: string, stepOrder: number): VerifiedLocator {
+  return {
+    ref: `step-${stepOrder}`,
+    expression,
+    role,
+    name,
+    backend: 'Playwright CLI DOM inspection',
+    observedAt,
+    stepOrder,
+    pageUrl: 'https://sap.example.test/sales-order',
+  }
+}
+
+function locatorFile(content: string): FileChange[] {
+  return [{
+    path: 'pages/CreateSalesOrder/createSalesOrder.locators.ts',
+    kind: 'create',
+    newContent: content,
+    reason: 'test fixture',
+    evidence: [],
+  }]
+}
+
+describe('rewriteObservedFrameLocators', () => {
+  it('replaces a guessed frame scope and near-match accessible names with the observed frame locator', () => {
+    const input = locatorFile([
+      'export class CreateSalesOrderLocators {',
+      '  readonly ORDER_TYPE = this.page.getByRole("textbox", { name: "Order Type Required" });',
+      '  readonly CONTINUE = this.page.getByRole("button", { name: "Continue Emphasized" });',
+      '}',
+    ].join('\n'))
+    const candidates = [
+      observed('this.page.frameLocator("iframe[name=\\"sap-frame\\"]").getByRole("textbox", { name: "Order Type", exact: true })', 'textbox', 'Order Type', 10),
+      observed('this.page.frameLocator("iframe[name=\\"sap-frame\\"]").getByRole("button", { name: "Continue", exact: true })', 'button', 'Continue', 11),
+    ]
+
+    const rewritten = rewriteObservedFrameLocators(input, candidates)[0]!.newContent!
+    expect(rewritten).toContain('frameLocator("iframe[name=\\"sap-frame\\"]").getByRole("textbox", { name: "Order Type", exact: true })')
+    expect(rewritten).toContain('frameLocator("iframe[name=\\"sap-frame\\"]").getByRole("button", { name: "Continue", exact: true })')
+    expect(rewritten).not.toContain('Order Type Required')
+    expect(rewritten).not.toContain('Continue Emphasized')
+  })
+
+  it('does not choose between equally similar observed controls', () => {
+    const input = locatorFile('export class XLocators {\n  readonly VALUE = this.page.getByRole("textbox", { name: "Value" });\n}')
+    const candidates = [
+      observed('this.page.frameLocator("iframe#a").getByRole("textbox", { name: "Value", exact: true })', 'textbox', 'Value', 1),
+      observed('this.page.frameLocator("iframe#b").getByRole("textbox", { name: "Value", exact: true })', 'textbox', 'Value', 2),
+    ]
+
+    const rewritten = rewriteObservedFrameLocators(input, candidates)[0]!.newContent!
+    expect(rewritten).toContain('this.page.getByRole("textbox", { name: "Value" })')
+  })
+
+  it('removes an unused guessed iframe locator after observed controls have been rebound', () => {
+    const input = locatorFile([
+      'export class XLocators {',
+      '  readonly FRAME = this.page.locator(\'iframe[name="__guessed"]\');',
+      '  readonly FIELD = this.page.getByRole("textbox", { name: "Order Type Required" });',
+      '}',
+    ].join('\n'))
+    const candidates = [
+      observed('this.page.frameLocator("iframe[name=\\"real-frame\\"]").getByRole("textbox", { name: "Order Type", exact: true })', 'textbox', 'Order Type', 10),
+    ]
+
+    const rewritten = rewriteObservedFrameLocators(input, candidates)[0]!.newContent!
+    expect(rewritten).not.toContain('__guessed')
+    expect(rewritten).toContain('frameLocator("iframe[name=\\"real-frame\\"]").getByRole("textbox", { name: "Order Type", exact: true })')
+  })
+})

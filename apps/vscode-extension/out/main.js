@@ -289112,7 +289112,7 @@ function extractLocatorExpressions(source) {
     const opening = start.index + start[0].lastIndexOf("(");
     let end = matchingParen(source, opening);
     if (end < 0) continue;
-    let cursor = end;
+    let cursor = end + 1;
     while (true) {
       const chainedCall = /^\s*\.\s*(?:contentFrame|frameLocator|nth|getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\s*\(/.exec(source.slice(cursor));
       if (!chainedCall) break;
@@ -289120,7 +289120,7 @@ function extractLocatorExpressions(source) {
       const chainEnd = matchingParen(source, chainOpening);
       if (chainEnd < 0) break;
       end = chainEnd;
-      cursor = chainEnd;
+      cursor = chainEnd + 1;
     }
     expressions.push(source.slice(start.index, end + 1).trim());
     consumedUntil = end + 1;
@@ -289130,6 +289130,7 @@ function extractLocatorExpressions(source) {
 }
 function rewriteObservedFrameLocators(changes, candidates) {
   const frameCandidates = /* @__PURE__ */ new Map();
+  const observedFrameLocators = [];
   for (const candidate of candidates) {
     const expression = extractLocatorExpressions(candidate.expression)[0];
     if (!expression) continue;
@@ -289141,11 +289142,13 @@ function rewriteObservedFrameLocators(changes, candidates) {
     const matches = frameCandidates.get(leaf) ?? /* @__PURE__ */ new Set();
     matches.add(expression);
     frameCandidates.set(leaf, matches);
+    const metadata = locatorRoleAndName(expression);
+    if (metadata) observedFrameLocators.push({ expression, ...metadata });
   }
-  if (frameCandidates.size === 0) return changes;
+  if (frameCandidates.size === 0 && observedFrameLocators.length === 0) return changes;
   return changes.map((change) => {
     if (!/\.locators\.tsx?$/i.test(change.path) || !change.newContent) return change;
-    const source = change.newContent.replace(
+    let source = change.newContent.replace(
       /^(\s*readonly\s+[A-Za-z_$][\w$]*\s*=\s*)([^;\r\n]+)(;?\s*)$/gm,
       (line, prefix, current, suffix) => {
         const currentExpression = extractLocatorExpressions(current)[0];
@@ -289154,9 +289157,30 @@ function rewriteObservedFrameLocators(changes, candidates) {
         if (!details || details.method === "frameLocator") return line;
         const leaf = normalizeLocatorExpression(`${details.method}(${details.args})`);
         const observed = frameCandidates.get(leaf);
-        if (!observed || observed.size !== 1) return line;
-        const scopedExpression = [...observed][0].replace(/^(?:(?:this\.)?page\.)/, "");
+        let scopedExpression = observed?.size === 1 ? [...observed][0] : void 0;
+        if (!scopedExpression) {
+          const generated = locatorRoleAndName(currentExpression);
+          if (!generated) return line;
+          const unique = /* @__PURE__ */ new Map();
+          for (const candidate of observedFrameLocators) {
+            unique.set(normalizeLocatorExpression(candidate.expression), candidate);
+          }
+          const ranked = [...unique.values()].filter((candidate) => candidate.role === generated.role).map((candidate) => ({
+            candidate,
+            score: textMatchScore(normalizeWords(candidate.name), normalizeWords(generated.name))
+          })).filter((item) => item.score >= 0.8).sort((left, right) => right.score - left.score);
+          if (!ranked[0] || ranked[1] && ranked[0].score - ranked[1].score < 0.15) return line;
+          scopedExpression = ranked[0].candidate.expression;
+        }
+        scopedExpression = scopedExpression.replace(/^(?:(?:this\.)?page\.)/, "");
         return `${prefix}this.page.${scopedExpression}${suffix}`;
+      }
+    );
+    source = source.replace(
+      /^\s*readonly\s+([A-Za-z_$][\w$]*)\s*=\s*this\.page\.locator\(\s*(['"`])iframe(?:\[[^\r\n]*?)?\2\s*\)\s*;?\s*\r?\n/gm,
+      (line, field) => {
+        const identifier = new RegExp(`\\b${field}\\b`, "g");
+        return identifier.test(source.replace(line, "")) ? line : "";
       }
     );
     return source === change.newContent ? change : {
@@ -289166,6 +289190,23 @@ function rewriteObservedFrameLocators(changes, candidates) {
       evidence: [...change.evidence ?? [], "The element role and accessible name matched one iframe-scoped Playwright snapshot locator."]
     };
   });
+}
+function locatorRoleAndName(expression) {
+  const details = locatorCallDetails(expression);
+  if (!details || details.method !== "getByRole") return void 0;
+  const match = details.args.match(/^\s*(['"])(.*?)\1\s*,\s*\{\s*name\s*:\s*(['"])((?:\\.|(?!\3)[\s\S])*)\3/);
+  if (!match) return void 0;
+  const decode = (quote, value) => {
+    if (quote === '"') {
+      try {
+        return JSON.parse(`"${value}"`);
+      } catch {
+        return value;
+      }
+    }
+    return value.replace(/\\(['"\\])/g, "$1");
+  };
+  return { role: decode(match[1], match[2]), name: decode(match[3], match[4]) };
 }
 function matchingParen(source, opening) {
   let depth = 0;

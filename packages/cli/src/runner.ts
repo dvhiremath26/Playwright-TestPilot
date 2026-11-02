@@ -1100,6 +1100,10 @@ async function inspectVisibleDomTargets(
           const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
           const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
           const control = core && el.id ? core.byId(el.id) : undefined;
+          const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
+          let icon = ''; try { icon = control && typeof control.getIcon === 'function' ? control.getIcon() || '' : ''; } catch {}
+          const shellSearch = /ushell|shell/i.test(controlType) || Boolean(el.closest('.sapUshellShellHead,.sapUshellShellHeader,.sapUshellShell,.sapUshellShellSearch,[id*="shell"]'));
+          const searchButton = role === 'button' && /search/i.test(icon) && shellSearch && Boolean(el.id && idCounts.get(el.id) === 1);
           const labels = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map(id => {
             const root = el.getRootNode(); const label = root.getElementById ? root.getElementById(id) : el.ownerDocument.getElementById(id);
             return label ? (label.innerText || label.textContent || '') : '';
@@ -1108,11 +1112,11 @@ async function inspectVisibleDomTargets(
           const ui5Name = ['getAccessibleName','getAriaLabel','getPlaceholder','getTooltip','getTitle','getText'].map(method => {
             try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
           }).find(value => typeof value === 'string' && value.trim()) || '';
-          const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+          const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || (searchButton ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
           const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
           const id = el.id || '';
-          const context = [el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || ''), control && control.getMetadata && control.getMetadata().getName()].filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 180);
-          return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), context, navigation: Boolean(nav) };
+          const context = [el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || ''), controlType].filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 180);
+          return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), searchButton, context, navigation: Boolean(nav) };
         });
       }, selector);
       const searchboxes = rows.filter(row => row.role === 'searchbox').length;
@@ -1158,6 +1162,10 @@ async function inspectVisibleDomTargets(
         const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
         const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
         const control = core && el.id ? core.byId(el.id) : undefined;
+        const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
+        let icon = ''; try { icon = control && typeof control.getIcon === 'function' ? control.getIcon() || '' : ''; } catch {}
+        const shellSearch = /ushell|shell/i.test(controlType) || Boolean(el.closest('.sapUshellShellHead,.sapUshellShellHeader,.sapUshellShell,.sapUshellShellSearch,[id*="shell"]'));
+        const searchButton = role === 'button' && /search/i.test(icon) && shellSearch && Boolean(el.id && idCounts.get(el.id) === 1);
         const ui5Labels = ['getText', 'getTitle', 'getTooltip', 'getAccessibleName', 'getAriaLabel', 'getHeaderText', 'getLabel', 'getPlaceholder'].map((method) => {
           try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
         }).filter((value) => typeof value === 'string' && value.trim());
@@ -1167,11 +1175,11 @@ async function inspectVisibleDomTargets(
           return label ? (label.innerText || label.textContent || '') : '';
         }).join(' ').trim();
         const associatedLabels = el.labels ? Array.from(el.labels).map((label) => label.innerText || label.textContent || '').join(' ') : '';
-        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || (searchButton ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
         const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
         const parentTexts = [el.parentElement, el.parentElement && el.parentElement.parentElement].filter(Boolean).map((parent) => (parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean);
-        const context = [...new Set([parentTexts[0], parentTexts[1], control && control.getMetadata && control.getMetadata().getName()].filter(Boolean))].join(' | ').slice(0, 180);
-        return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), context, navigation: Boolean(nav) };
+        const context = [...new Set([parentTexts[0], parentTexts[1], controlType].filter(Boolean))].join(' | ').slice(0, 180);
+        return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), searchButton, context, navigation: Boolean(nav) };
       }).filter((item) => (item.name && (item.name.length > 1 || item.navigation)) || (allowUnnamedSearch && item.role === 'searchbox')).slice(0, 160);
     }`, undefined, callOptions),
     { signal },
@@ -1205,7 +1213,7 @@ async function inspectVisibleDomTargets(
     // a unique id, identical role/name matches remain ambiguous and are excluded.
     if (duplicateName && !row.uniqueId) return []
     const unnamedUniqueSearchbox = isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.name && searchboxCount === 1
-    const useObservedId = duplicateName ||
+    const useObservedId = duplicateName || row.searchButton ||
       (isSearchTarget(requestedTarget) && row.role === 'searchbox' && searchboxCount > 1 && row.id && row.uniqueId) ||
       (includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35)
     const css = row.id ? `[id=${JSON.stringify(row.id)}]` : undefined
@@ -1227,7 +1235,7 @@ async function inspectVisibleDomTargets(
   })
 }
 
-function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: string; id?: string; uniqueId?: boolean; context?: string; navigation?: boolean }> {
+function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: string; id?: string; uniqueId?: boolean; searchButton?: boolean; context?: string; navigation?: boolean }> {
   const start = output.indexOf('[')
   const end = output.lastIndexOf(']')
   if (start < 0 || end <= start) return []
@@ -1236,7 +1244,7 @@ function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: str
     if (!Array.isArray(value)) return []
     return value.flatMap((item) => {
       if (!item || typeof item !== 'object') return []
-      const row = item as { role?: unknown; name?: unknown; id?: unknown; uniqueId?: unknown; context?: unknown; navigation?: unknown }
+      const row = item as { role?: unknown; name?: unknown; id?: unknown; uniqueId?: unknown; searchButton?: unknown; context?: unknown; navigation?: unknown }
       const role = typeof row.role === 'string' ? row.role : undefined
       const name = typeof row.name === 'string' ? row.name.trim() : ''
       if (!name && role !== 'searchbox') return []
@@ -1245,6 +1253,7 @@ function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: str
         name,
         id: typeof row.id === 'string' ? row.id : undefined,
         uniqueId: row.uniqueId === true,
+        searchButton: row.searchButton === true,
         context: typeof row.context === 'string' ? row.context : undefined,
         navigation: row.navigation === true,
       }]
@@ -1260,6 +1269,7 @@ interface FrameDomRow {
   id?: string
   uniqueId?: boolean
   uniqueSearchbox?: boolean
+  searchButton?: boolean
   context?: string
   navigation?: boolean
   frameSelectors: Array<{ selector: string; ordinal?: number }>
@@ -1290,6 +1300,7 @@ function parseEvaluatedFrameDomRows(output: string): FrameDomRow[] {
         id: typeof row.id === 'string' ? row.id : undefined,
         uniqueId: row.uniqueId === true,
         uniqueSearchbox: row.uniqueSearchbox === true,
+        searchButton: row.searchButton === true,
         context: typeof row.context === 'string' ? row.context : undefined,
         navigation: row.navigation === true,
         frameSelectors,
@@ -1330,7 +1341,7 @@ function buildFrameDomTargets(
       : `frameLocator(${JSON.stringify(segment.selector)}).nth(${segment.ordinal})`,
     ).join('.')
     const duplicate = (counts.get(`${row.frameSelectors.map((item) => `${item.selector}:${item.ordinal ?? ''}`).join('>')}\u0000${row.role ?? ''}\u0000${row.name}`) ?? 0) > 1
-    const useId = Boolean(row.id && row.uniqueId && (duplicate || (isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.uniqueSearchbox)))
+    const useId = Boolean(row.id && row.uniqueId && (row.searchButton || duplicate || (isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.uniqueSearchbox)))
     if (duplicate && !useId) return []
     const leaf = useId
       ? `locator(${JSON.stringify(`[id=${JSON.stringify(row.id)}]`)})`

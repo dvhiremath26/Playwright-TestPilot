@@ -287571,6 +287571,10 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
           const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
           const control = core && el.id ? core.byId(el.id) : undefined;
+          const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
+          let icon = ''; try { icon = control && typeof control.getIcon === 'function' ? control.getIcon() || '' : ''; } catch {}
+          const shellSearch = /ushell|shell/i.test(controlType) || Boolean(el.closest('.sapUshellShellHead,.sapUshellShellHeader,.sapUshellShell,.sapUshellShellSearch,[id*="shell"]'));
+          const searchButton = role === 'button' && /search/i.test(icon) && shellSearch && Boolean(el.id && idCounts.get(el.id) === 1);
           const labels = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map(id => {
             const root = el.getRootNode(); const label = root.getElementById ? root.getElementById(id) : el.ownerDocument.getElementById(id);
             return label ? (label.innerText || label.textContent || '') : '';
@@ -287579,11 +287583,11 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const ui5Name = ['getAccessibleName','getAriaLabel','getPlaceholder','getTooltip','getTitle','getText'].map(method => {
             try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
           }).find(value => typeof value === 'string' && value.trim()) || '';
-          const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+          const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || (searchButton ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
           const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
           const id = el.id || '';
-          const context = [el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || ''), control && control.getMetadata && control.getMetadata().getName()].filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 180);
-          return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), context, navigation: Boolean(nav) };
+          const context = [el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || ''), controlType].filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 180);
+          return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), searchButton, context, navigation: Boolean(nav) };
         });
       }, selector);
       const searchboxes = rows.filter(row => row.role === 'searchbox').length;
@@ -287628,6 +287632,10 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
         const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
         const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
         const control = core && el.id ? core.byId(el.id) : undefined;
+        const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
+        let icon = ''; try { icon = control && typeof control.getIcon === 'function' ? control.getIcon() || '' : ''; } catch {}
+        const shellSearch = /ushell|shell/i.test(controlType) || Boolean(el.closest('.sapUshellShellHead,.sapUshellShellHeader,.sapUshellShell,.sapUshellShellSearch,[id*="shell"]'));
+        const searchButton = role === 'button' && /search/i.test(icon) && shellSearch && Boolean(el.id && idCounts.get(el.id) === 1);
         const ui5Labels = ['getText', 'getTitle', 'getTooltip', 'getAccessibleName', 'getAriaLabel', 'getHeaderText', 'getLabel', 'getPlaceholder'].map((method) => {
           try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
         }).filter((value) => typeof value === 'string' && value.trim());
@@ -287637,11 +287645,11 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           return label ? (label.innerText || label.textContent || '') : '';
         }).join(' ').trim();
         const associatedLabels = el.labels ? Array.from(el.labels).map((label) => label.innerText || label.textContent || '').join(' ') : '';
-        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || (searchButton ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
         const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
         const parentTexts = [el.parentElement, el.parentElement && el.parentElement.parentElement].filter(Boolean).map((parent) => (parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean);
-        const context = [...new Set([parentTexts[0], parentTexts[1], control && control.getMetadata && control.getMetadata().getName()].filter(Boolean))].join(' | ').slice(0, 180);
-        return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), context, navigation: Boolean(nav) };
+        const context = [...new Set([parentTexts[0], parentTexts[1], controlType].filter(Boolean))].join(' | ').slice(0, 180);
+        return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), searchButton, context, navigation: Boolean(nav) };
       }).filter((item) => (item.name && (item.name.length > 1 || item.navigation)) || (allowUnnamedSearch && item.role === 'searchbox')).slice(0, 160);
     }`, void 0, callOptions),
     { signal }
@@ -287666,7 +287674,7 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
     const duplicateName = (counts.get(`${row.role ?? ""}\0${row.name}`) ?? 0) !== 1;
     if (duplicateName && !row.uniqueId) return [];
     const unnamedUniqueSearchbox = isSearchTarget(requestedTarget) && row.role === "searchbox" && !row.name && searchboxCount === 1;
-    const useObservedId = duplicateName || isSearchTarget(requestedTarget) && row.role === "searchbox" && searchboxCount > 1 && row.id && row.uniqueId || includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35;
+    const useObservedId = duplicateName || row.searchButton || isSearchTarget(requestedTarget) && row.role === "searchbox" && searchboxCount > 1 && row.id && row.uniqueId || includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35;
     const css = row.id ? `[id=${JSON.stringify(row.id)}]` : void 0;
     const expression = useObservedId && css ? `locator(${JSON.stringify(css)})` : unnamedUniqueSearchbox ? `getByRole("searchbox")` : row.role && row.role !== "generic" ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : `getByText(${JSON.stringify(row.name)}, { exact: true })`;
     const selector = useObservedId && css ? `css=${css}` : unnamedUniqueSearchbox ? "role=searchbox" : row.role && row.role !== "generic" ? `role=${row.role}[name=${JSON.stringify(row.name)}]` : `text=${JSON.stringify(row.name)}`;
@@ -287691,6 +287699,7 @@ function parseEvaluatedDomRows(output) {
         name,
         id: typeof row.id === "string" ? row.id : void 0,
         uniqueId: row.uniqueId === true,
+        searchButton: row.searchButton === true,
         context: typeof row.context === "string" ? row.context : void 0,
         navigation: row.navigation === true
       }];
@@ -287722,6 +287731,7 @@ function parseEvaluatedFrameDomRows(output) {
         id: typeof row.id === "string" ? row.id : void 0,
         uniqueId: row.uniqueId === true,
         uniqueSearchbox: row.uniqueSearchbox === true,
+        searchButton: row.searchButton === true,
         context: typeof row.context === "string" ? row.context : void 0,
         navigation: row.navigation === true,
         frameSelectors
@@ -287752,7 +287762,7 @@ function buildFrameDomTargets(rows, requestedTarget, includeSidebarCandidates) {
       (segment) => segment.ordinal === void 0 ? `frameLocator(${JSON.stringify(segment.selector)})` : `frameLocator(${JSON.stringify(segment.selector)}).nth(${segment.ordinal})`
     ).join(".");
     const duplicate = (counts.get(`${row.frameSelectors.map((item) => `${item.selector}:${item.ordinal ?? ""}`).join(">")}\0${row.role ?? ""}\0${row.name}`) ?? 0) > 1;
-    const useId = Boolean(row.id && row.uniqueId && (duplicate || isSearchTarget(requestedTarget) && row.role === "searchbox" && !row.uniqueSearchbox));
+    const useId = Boolean(row.id && row.uniqueId && (row.searchButton || duplicate || isSearchTarget(requestedTarget) && row.role === "searchbox" && !row.uniqueSearchbox));
     if (duplicate && !useId) return [];
     const leaf = useId ? `locator(${JSON.stringify(`[id=${JSON.stringify(row.id)}]`)})` : row.role === "searchbox" && !row.name && row.uniqueSearchbox ? `getByRole("searchbox")` : row.role && row.name ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : void 0;
     if (!leaf) return [];

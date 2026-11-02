@@ -288022,7 +288022,7 @@ ${dataIssues.map((issue) => `- ${issue}`).join("\n")}`] : [],
   const remainingStandardsIssues = standardIssues(changes);
   if (remainingStandardsIssues.length > 0) {
     throw new Error(
-      `The selected Copilot model did not follow the target framework standards after two automatic correction attempts. No files were written:
+      `Browser evidence replay completed, but final code validation rejected the generated files after two automatic correction attempts. No files were written:
 ${remainingStandardsIssues.map((issue) => `- ${issue}`).join("\n")}`
     );
   }
@@ -288618,7 +288618,36 @@ function findFrameworkStandardIssues(changes, examples, customFixtureUsed, appro
   return [...new Set(issues)];
 }
 function normalizeLocatorExpression(expression) {
-  return expression.trim().replace(/;\s*$/, "").replace(/^this\.page\./, "").replace(/\s+/g, "");
+  const source = expression.trim().replace(/;\s*$/, "").replace(/^this\.page\./, "");
+  let normalized = "";
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index];
+    if (char === "'" || char === '"' || char === "`") {
+      let value = "";
+      const quote = char;
+      index++;
+      for (; index < source.length; index++) {
+        const current = source[index];
+        if (current === "\\" && index + 1 < source.length) {
+          const escaped = source[++index];
+          value += escaped === quote || escaped === "\\" ? escaped : `\\${escaped}`;
+          continue;
+        }
+        if (current === quote) break;
+        value += current;
+      }
+      normalized += JSON.stringify(value);
+      continue;
+    }
+    if (/\s/.test(char)) continue;
+    if (char === ",") {
+      let next = index + 1;
+      while (next < source.length && /\s/.test(source[next])) next++;
+      if (/[}\])]/.test(source[next] ?? "")) continue;
+    }
+    normalized += char;
+  }
+  return normalized;
 }
 async function generateRepairChanges(options) {
   const attempts = options.task.repairAttempts ?? 0;

@@ -150,6 +150,9 @@ Verified in the current workspace:
   step-specific observed locator candidates during corrections, and allows MCP calls 75 seconds.
   After an MCP click timeout, it checks the next step's target in a fresh snapshot without retrying
   the click.
+- VS Code extension build 0.1.68 compares locator expressions after normalizing harmless formatting
+  differences (quotes, whitespace, and trailing commas) while preserving locator role and name.
+  Generation errors now distinguish a completed browser replay from rejected generated code.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of
   `npm run check` and is not called by the extension generation path.
 - The last recorded full check passed 154 tests before the latest model-generation changes;

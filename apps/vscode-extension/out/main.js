@@ -286291,12 +286291,17 @@ var PlaywrightMcpAdapter = class {
       return { ok: false, error: `MCP snapshot ref ${target} has no role or accessible name to ground a locator.` };
     }
     const matching = [...this.snapshotElements.values()].filter(
-      (element) => element.role === observed.role && element.name === observed.name
+      (element) => element.role === observed.role && element.name === observed.name && element.frameIndexes.join(".") === observed.frameIndexes.join(".")
     );
     if (matching.length !== 1) {
       return { ok: false, error: `MCP snapshot role/name is ambiguous (${matching.length} matches); no locator was generated.` };
     }
-    const expression = observed.role && observed.name ? `getByRole(${JSON.stringify(observed.role)}, { name: ${JSON.stringify(observed.name)}, exact: true })` : observed.role ? `getByRole(${JSON.stringify(observed.role)})` : `getByText(${JSON.stringify(observed.name)}, { exact: true })`;
+    const baseExpression = observed.role && observed.name ? `getByRole(${JSON.stringify(observed.role)}, { name: ${JSON.stringify(observed.name)}, exact: true })` : observed.role ? `getByRole(${JSON.stringify(observed.role)})` : `getByText(${JSON.stringify(observed.name)}, { exact: true })`;
+    if (observed.frameIndexes.length > 1) {
+      return { ok: false, error: `MCP ref ${target} is nested in multiple iframe levels; the snapshot does not expose enough stable iframe selectors to ground a frameLocator chain.` };
+    }
+    const frameScope = observed.frameIndexes.length === 1 ? `frameLocator('iframe').nth(${observed.frameIndexes[0]})` : void 0;
+    const expression = frameScope ? `${frameScope}.${baseExpression}` : baseExpression;
     return { ok: true, output: expression };
   }
   async close(options) {
@@ -286315,7 +286320,7 @@ var PlaywrightMcpAdapter = class {
     const seen = /* @__PURE__ */ new Set();
     this.elementDescriptions.clear();
     this.snapshotElements.clear();
-    const refRe = /\[ref=([A-Za-z0-9_-]+)\]|\["(e[A-Za-z0-9_-]+)"\]/;
+    const refRe = /\[ref=([A-Za-z0-9_-]+)\]|\["((?:f\d+)*e[A-Za-z0-9_-]+)"\]/;
     for (const line of raw.split(/\r?\n/)) {
       const m = refRe.exec(line);
       if (!m) continue;
@@ -286336,7 +286341,8 @@ var PlaywrightMcpAdapter = class {
       });
       const description = [role, name].filter(Boolean).join(" ");
       if (description) this.elementDescriptions.set(ref, description);
-      this.snapshotElements.set(ref, { role, name });
+      const frameIndexes = [...ref.matchAll(/f(\d+)/g)].map((frame) => Number(frame[1]) - 1);
+      this.snapshotElements.set(ref, { role, name, frameIndexes });
     }
     return { raw, elements, capturedAt: (/* @__PURE__ */ new Date()).toISOString() };
   }
@@ -287450,7 +287456,7 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
       }
       const generated = await browser.generateLocator(element.ref, { signal: options.signal });
       const expression = generated.output?.trim();
-      if (!generated.ok || !expression || !/^(getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\(/.test(expression)) continue;
+      if (!generated.ok || !expression || !/^(?:(?:this\.)?page\.)?(?:frameLocator|getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\(/.test(expression)) continue;
       candidates.push({
         ref: element.ref,
         role: element.role,
@@ -287941,7 +287947,7 @@ ${sharedPageSources.join("\n\n")}`;
   const messages = [
     {
       role: "system",
-      content: 'You emit file content only. Emit nothing but the files requested, each as a fenced block tagged with its path. The target framework conventions are mandatory. Follow the included real source examples and never substitute generic Playwright patterns for the framework architecture. Never use test.only or invent a fixture, action method, or helper API that was not discovered. Locator fields must be Playwright Locator objects, not strings containing locator code. Every locator must exactly match a Playwright CLI snapshot observation or an indexed framework locator; comments such as "adjust this selector" are not acceptable evidence. Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.'
+      content: 'You emit file content only. Emit nothing but the files requested, each as a fenced block tagged with its path. The target framework conventions are mandatory. Follow the included real source examples and never substitute generic Playwright patterns for the framework architecture. Never use test.only or invent a fixture, action method, or helper API that was not discovered. Locator fields must be Playwright Locator objects, not strings containing locator code. Every locator must exactly match a Playwright CLI snapshot observation or an indexed framework locator; comments such as "adjust this selector" are not acceptable evidence. If a snapshot locator is scoped to an iframe, preserve the entire frameLocator/contentFrame chain in the paired locator class and page actions; do not strip the frame scope. Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.'
     },
     {
       role: "user",
@@ -288022,7 +288028,7 @@ ${issues.map((issue) => `- ${issue}`).join("\n")}`] : [],
       ...dataIssues.length > 0 ? [`It failed to use the extracted test data:
 ${dataIssues.map((issue) => `- ${issue}`).join("\n")}`] : [],
       "Return the complete file set again. Implement every manual step in order; the generated code does not need to repeat the manual wording verbatim. Correct every listed standards violation and copy the architecture from the real source examples where needed. For new page behavior, create page-object/locator code using matching browser observations; never invent a selector that is absent from evidence. Every new locator expression must exactly match an expression in the Playwright CLI observations or an indexed framework locator. For data-driven text assertions, a locator-class method may accept the expected value and use getByText(expectedValue) only when a literal getByText candidate for that assertion is present in the matching snapshot evidence; pass the value from the data row. If evidence is insufficient, do not invent a locator or leave a guessed CSS selector with an adjustment comment; keep the specific step unresolved and explain which live snapshot is missing.",
-      "Page methods must never call this.page.getByRole(...), this.page.locator(...), or this.page.goto(...). Put the observed locator in the paired locator class, then call the confirmed framework wrapper: await this.actions.fill(this.locators.FIELD, value), await this.actions.click(this.locators.FIELD), and await this.actions.browser.navigate(url). Match the target framework examples and do not use raw Playwright interactions inside a page object.",
+      "Page methods must never call this.page.getByRole(...), this.page.frameLocator(...), this.page.locator(...), or this.page.goto(...). Put the observed locator in the paired locator class, then call the confirmed framework wrapper: await this.actions.fill(this.locators.FIELD, value), await this.actions.click(this.locators.FIELD), and await this.actions.browser.navigate(url). For an element observed inside an iframe, preserve its complete frame-scoped locator chain exactly (for example this.page.frameLocator(observedFrameSelector).getByRole(...)); never drop the frame scope or treat the control as belonging to the main page. Match the target framework examples and do not use raw Playwright interactions inside a page object.",
       "Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.",
       renderScreenArchitectureRequirements(manualCases, targetPagePath, targetLocatorPath),
       "Output only fenced TypeScript file blocks with repository-relative paths, including a tests/*.spec.ts file."
@@ -288304,7 +288310,7 @@ function manualDataUsageIssues(changes, data, repositoryRoot, targetPagePath, ta
       if (dataLoaderImport || /DataLoader\s*\.\s*get\s*\(/.test(source)) issues.push(`${spec.path} must use the direct JSON import consistently after the DataLoader fallback.`);
     }
   }
-  const generatedCode = changes.filter((change) => /\.tsx?$/.test(change.path) && change.path !== "src/utils/testData/dataTypes.ts").map((change) => change.newContent ?? "").join("\n");
+  const generatedCode = changes.filter((change) => /\.tsx?$/.test(change.path) && !/\.locators\.tsx?$/i.test(change.path) && change.path !== "src/utils/testData/dataTypes.ts").map((change) => change.newContent ?? "").join("\n");
   const combinedSource = specs.map((spec) => spec.newContent ?? "").join("\n");
   const dataVariable = accessMode === "direct-json" ? combinedSource.match(new RegExp(`import\\s+(${escapeRegExp(jsonImportName)})\\s+from`))?.[1] : combinedSource.match(new RegExp(
     `(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)`
@@ -288545,20 +288551,22 @@ function findAssertionLocatorIssues(changes, testCases, candidates) {
       for (const locatorFile of locatorFiles) {
         const source = locatorFile.newContent ?? "";
         const assertionMembers = [
-          ...source.matchAll(/(?:readonly\s+)?([A-Za-z_$][\w$]*)\s*=\s*((?:this\.page\.)?(?:getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\s*\([^\n;]*\))/g)
-        ].filter((match) => /display|result|output|expected|validation|confirm|success/i.test(match[1] ?? ""));
+          ...source.matchAll(/(?:readonly\s+)?([A-Za-z_$][\w$]*)\s*=\s*([^\n;]+)/g)
+        ].filter(
+          (match) => /display|result|output|expected|validation|confirm|success/i.test(match[1] ?? "") && extractLocatorExpressions(match[2] ?? "").length > 0
+        );
         const assertionMethods = [...source.matchAll(
           /\b([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)\s*:\s*string\s*\)\s*(?::\s*[^={]+)?\s*\{([\s\S]*?)\}/g
         )].filter((match) => /display|result|output|expected|validation|confirm|success/i.test(match[1] ?? ""));
         const observedExpressions = assertionCandidates.map((candidate) => normalizeLocatorExpression(candidate.expression));
-        const observedStrategies = new Set(assertionCandidates.map((candidate) => candidate.expression.match(/^(?:this\.page\.)?(getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\s*\(/)?.[1]));
+        const observedStrategies = new Set(assertionCandidates.map((candidate) => locatorCallDetails(candidate.expression)?.method));
         const hasMatchingField = assertionMembers.some((match) => observedExpressions.includes(normalizeLocatorExpression(match[2] ?? "")));
         const hasMatchingMethod = assertionMethods.some((method) => {
           const parameter = method[2];
           const body = method[3] ?? "";
-          const dynamicCalls = [...body.matchAll(/(?:this\.page\.)?(getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\s*\(([^)]*)\)/g)];
+          const dynamicCalls = extractLocatorExpressions(body).map(locatorCallDetails).filter((call) => Boolean(call));
           return dynamicCalls.some(
-            (call) => observedStrategies.has(call[1]) && call[2]?.trim() === parameter
+            (call) => observedStrategies.has(call.method) && call.args?.trim() === parameter
           );
         });
         if ((assertionMembers.length > 0 || assertionMethods.length > 0) && !hasMatchingField && !hasMatchingMethod) {
@@ -288683,7 +288691,7 @@ function findFrameworkStandardIssues(changes, examples, customFixtureUsed, appro
     if (examples.pageExtendsBasePage && !/class\s+\w+\s+extends\s+BasePage\b/.test(source)) {
       issues.push(`${page.path} must extend BasePage, as existing framework page classes do.`);
     }
-    if (examples.pageUsesActionFacade && /this\.page\.(?:locator|getBy\w+|goto)\s*\(/.test(source)) {
+    if (examples.pageUsesActionFacade && /this\.page\.(?:frameLocator|locator|getBy\w+|goto)\s*\(/.test(source)) {
       issues.push(`${page.path} bypasses the framework Actions facade; page methods should call this.actions and use this.locators.`);
     }
   }
@@ -288692,14 +288700,19 @@ function findFrameworkStandardIssues(changes, examples, customFixtureUsed, appro
     if (examples.locatorClassBased && !/export\s+class\s+\w+Locators\b/.test(source)) {
       issues.push(`${locator.path} must export a *Locators class, matching existing locator modules.`);
     }
-    if (/export\s+const\s+locators\s*=/.test(source) || /:\s*["'`]\s*(?:this\.page\.)?(?:getByRole|getByLabel|getByText|getByPlaceholder|locator)\s*\(/.test(source)) {
+    if (/export\s+const\s+locators\s*=/.test(source) || /:\s*["'`]\s*(?:this\.page\.)?(?:frameLocator|getByRole|getByLabel|getByText|getByPlaceholder|locator)\s*\(/.test(source)) {
       issues.push(`${locator.path} stores locator expressions as strings; locator fields must be actual this.page.getBy.../locator(...) objects.`);
     }
     if (/adjust this selector|selector based on the actual|todo\s*:\s*.*locator|assumed\s*[-:]\s*not observed/i.test(source)) {
       issues.push(`${locator.path} contains a guessed/unverified locator note. Remove it and use a locator observed in a Playwright snapshot or already indexed in the framework.`);
     }
     const allowed = new Set(approvedLocatorExpressions.map(normalizeLocatorExpression).filter(Boolean));
-    const locatorCalls = [...source.matchAll(/(?:this\.page\.)?(getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\s*\(([^)]*)\)/g)];
+    const locatorCalls = extractLocatorExpressions(source).map((expression) => ({
+      expression,
+      method: locatorCallDetails(expression)?.method ?? "",
+      args: locatorCallDetails(expression)?.args ?? "",
+      index: source.indexOf(expression)
+    }));
     const stringParameterMethods = [...source.matchAll(
       /\b[A-Za-z_$][\w$]*\s*\(\s*([A-Za-z_$][\w$]*)\s*:\s*string\s*\)\s*(?::\s*[^={]+)?\s*\{([\s\S]*?)\}/g
     )].map((method) => ({
@@ -288708,17 +288721,17 @@ function findFrameworkStandardIssues(changes, examples, customFixtureUsed, appro
       bodyStart: (method.index ?? 0) + method[0].indexOf("{") + 1
     }));
     for (const match of locatorCalls) {
-      const expression = `${match[1]}(${match[2]})`;
+      const expression = match.expression.replace(/^this\.page\./, "");
       if (!allowed.has(normalizeLocatorExpression(expression))) {
-        const callIndex = match.index ?? -1;
+        const callIndex = match.index;
         const method = stringParameterMethods.find(
           (candidate) => callIndex >= candidate.bodyStart && callIndex < candidate.bodyStart + candidate.body.length
         );
         const approvedTextStrategy = [...allowed].some((item) => item.startsWith("getByText("));
-        const isVerifiedDynamicText = match[1] === "getByText" && method?.parameter && match[2]?.trim() === method.parameter && new RegExp(`\\breturn\\s+this\\.page\\.getByText\\s*\\(\\s*${method.parameter}\\s*\\)\\s*;?`).test(method.body) && approvedTextStrategy;
+        const isVerifiedDynamicText = match.method === "getByText" && method?.parameter && match.args.trim() === method.parameter && new RegExp(`\\breturn\\s+this\\.page\\.getByText\\s*\\(\\s*${method.parameter}\\s*\\)\\s*;?`).test(method.body) && approvedTextStrategy;
         if (!isVerifiedDynamicText) {
-          const dynamicVariable = /^[A-Za-z_$][\w$]*$/.test(match[2]?.trim() ?? "");
-          issues.push(dynamicVariable && match[1] === "getByText" && approvedTextStrategy ? `${locator.path} uses ${expression} outside a locator method that accepts and returns the expected text. Define a method with a string parameter and return this.page.getByText(theSameParameter); do not put a data-driven locator in a readonly field.` : `${locator.path} contains unverified locator ${expression}. New locators must match Playwright CLI snapshot evidence or an indexed framework locator exactly.`);
+          const dynamicVariable = /^[A-Za-z_$][\w$]*$/.test(match.args.trim());
+          issues.push(dynamicVariable && match.method === "getByText" && approvedTextStrategy ? `${locator.path} uses ${expression} outside a locator method that accepts and returns the expected text. Define a method with a string parameter and return this.page.getByText(theSameParameter); do not put a data-driven locator in a readonly field.` : `${locator.path} contains unverified locator ${expression}. New locators must match Playwright CLI snapshot evidence or an indexed framework locator exactly.`);
         }
       }
     }
@@ -288726,7 +288739,7 @@ function findFrameworkStandardIssues(changes, examples, customFixtureUsed, appro
   return [...new Set(issues)];
 }
 function normalizeLocatorExpression(expression) {
-  const source = expression.trim().replace(/;\s*$/, "").replace(/^this\.page\./, "");
+  const source = expression.trim().replace(/;\s*$/, "").replace(/^(?:(?:this\.)?page\.)/, "");
   let normalized = "";
   for (let index = 0; index < source.length; index++) {
     const char = source[index];
@@ -288882,8 +288895,61 @@ ${sourceBlocks.join("\n\n")}`
   }
   return scoped;
 }
+function locatorCallDetails(expression) {
+  const calls = [...expression.matchAll(/(?:^|\.)(frameLocator|getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\s*\(/g)];
+  const call = calls.at(-1);
+  if (!call) return void 0;
+  const opening = (call.index ?? 0) + call[0].lastIndexOf("(");
+  const closing = matchingParen(expression, opening);
+  if (closing < 0) return void 0;
+  return { method: call[1], args: expression.slice(opening + 1, closing) };
+}
 function extractLocatorExpressions(source) {
-  return [...source.matchAll(/(?:this\.page\.)?(getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\s*\(([^)]*)\)/g)].map((match) => `${match[1]}(${match[2] ?? ""})`);
+  const startPattern = /(?:this\.page\.)?(?:frameLocator|getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\s*\(/g;
+  const expressions = [];
+  let start;
+  let consumedUntil = -1;
+  while ((start = startPattern.exec(source)) !== null) {
+    if (start.index < consumedUntil) continue;
+    const opening = start.index + start[0].lastIndexOf("(");
+    let end = matchingParen(source, opening);
+    if (end < 0) continue;
+    let cursor = end;
+    while (true) {
+      const chainedCall = /^\s*\.\s*(?:contentFrame|frameLocator|nth|getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\s*\(/.exec(source.slice(cursor));
+      if (!chainedCall) break;
+      const chainOpening = cursor + chainedCall[0].lastIndexOf("(");
+      const chainEnd = matchingParen(source, chainOpening);
+      if (chainEnd < 0) break;
+      end = chainEnd;
+      cursor = chainEnd;
+    }
+    expressions.push(source.slice(start.index, end + 1).trim());
+    consumedUntil = end + 1;
+    startPattern.lastIndex = consumedUntil;
+  }
+  return expressions;
+}
+function matchingParen(source, opening) {
+  let depth = 0;
+  let quote = "";
+  let escaped = false;
+  for (let index = opening; index < source.length; index++) {
+    const char = source[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = "";
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "(") depth++;
+    else if (char === ")" && --depth === 0) return index;
+  }
+  return -1;
 }
 function parseGeneratedFiles(text, repositoryRoot, options = {}) {
   const workspace2 = new Workspace(repositoryRoot);

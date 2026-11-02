@@ -79,7 +79,7 @@ export class PlaywrightMcpAdapter implements BrowserTool {
   private pending = new Map<number, { resolve: (m: RpcMessage) => void; reject: (e: Error) => void }>()
   private stderrBuf = ''
   private readonly elementDescriptions = new Map<string, string>()
-  private readonly snapshotElements = new Map<string, { role?: string; name?: string }>()
+  private readonly snapshotElements = new Map<string, { role?: string; name?: string; frameIndexes: number[] }>()
   private readonly toolSchemas = new Map<string, Record<string, unknown>>()
 
   readonly info: BrowserToolInfo = {
@@ -205,17 +205,25 @@ export class PlaywrightMcpAdapter implements BrowserTool {
       return { ok: false, error: `MCP snapshot ref ${target} has no role or accessible name to ground a locator.` }
     }
     const matching = [...this.snapshotElements.values()].filter((element) =>
-      element.role === observed.role && element.name === observed.name,
+      element.role === observed.role && element.name === observed.name &&
+      element.frameIndexes.join('.') === observed.frameIndexes.join('.'),
     )
     if (matching.length !== 1) {
       return { ok: false, error: `MCP snapshot role/name is ambiguous (${matching.length} matches); no locator was generated.` }
     }
 
-    const expression = observed.role && observed.name
+    const baseExpression = observed.role && observed.name
       ? `getByRole(${JSON.stringify(observed.role)}, { name: ${JSON.stringify(observed.name)}, exact: true })`
       : observed.role
         ? `getByRole(${JSON.stringify(observed.role)})`
         : `getByText(${JSON.stringify(observed.name)}, { exact: true })`
+    if (observed.frameIndexes.length > 1) {
+      return { ok: false, error: `MCP ref ${target} is nested in multiple iframe levels; the snapshot does not expose enough stable iframe selectors to ground a frameLocator chain.` }
+    }
+    const frameScope = observed.frameIndexes.length === 1
+      ? `frameLocator('iframe').nth(${observed.frameIndexes[0]})`
+      : undefined
+    const expression = frameScope ? `${frameScope}.${baseExpression}` : baseExpression
     return { ok: true, output: expression }
   }
 
@@ -239,7 +247,7 @@ export class PlaywrightMcpAdapter implements BrowserTool {
     this.snapshotElements.clear()
 
       // Accept the CLI/MCP snapshot ref format or a bare quoted uid.
-    const refRe = /\[ref=([A-Za-z0-9_-]+)\]|\["(e[A-Za-z0-9_-]+)"\]/
+    const refRe = /\[ref=([A-Za-z0-9_-]+)\]|\["((?:f\d+)*e[A-Za-z0-9_-]+)"\]/
 
     for (const line of raw.split(/\r?\n/)) {
       const m = refRe.exec(line)
@@ -267,7 +275,8 @@ export class PlaywrightMcpAdapter implements BrowserTool {
       })
       const description = [role, name].filter(Boolean).join(' ')
       if (description) this.elementDescriptions.set(ref, description)
-      this.snapshotElements.set(ref, { role, name })
+      const frameIndexes = [...ref.matchAll(/f(\d+)/g)].map((frame) => Number(frame[1]) - 1)
+      this.snapshotElements.set(ref, { role, name, frameIndexes })
     }
 
     return { raw, elements, capturedAt: new Date().toISOString() }

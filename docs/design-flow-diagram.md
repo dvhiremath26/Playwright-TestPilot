@@ -68,6 +68,13 @@ that are unsupported or still ambiguous stop inspection rather than receiving a 
 locator. Start Page Only captures the initial screen and offers candidates only for the first
 actionable step.
 
+Iframe controls are supported from frame-scoped snapshot refs. Playwright CLI is the primary
+backend; generated locator expressions retain the observed `frameLocator`/`contentFrame` chain,
+and framework validation compares that complete chain against the evidence. Playwright MCP
+fallback scopes its frame-prefixed refs to the observed iframe ordinal for a single frame level.
+When a nested MCP frame ref does not provide enough frame identity, TestPilot stops rather than
+emitting a locator against the main document.
+
 The CLI supports `--target-url <url>` with `--browse`, and optionally `--browser-mcp-command`
 plus `--browser-mcp-args` for secondary fallback. The VS Code extension configures Playwright
 CLI as primary and Playwright MCP as fallback. Evidence is generated from fresh snapshot

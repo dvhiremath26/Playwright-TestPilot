@@ -513,6 +513,39 @@ export async function gatherEvidenceForTestCase(
   for (const [stepIndex, step] of options.steps.entries()) {
     if (options.signal?.aborted) throw new Error('Browser step replay was cancelled.')
 
+    if (isManualWaitStep(step.action)) {
+      const awaitedStep = options.steps.slice(stepIndex + 1).find((candidate) => isLocatorAction(candidate.action))
+      const awaitedAction = awaitedStep ? parseReplayAction(awaitedStep.action) : undefined
+      const targetDescription = awaitedAction?.target ?? manualWaitTarget(step.action)
+      const deadline = Date.now() + 20_000
+      let matched: BrowserElementRef | undefined
+      while (Date.now() < deadline) {
+        if (options.signal?.aborted) throw new Error('Browser step replay was cancelled.')
+        const refreshed = await browser.capture(undefined, { signal: options.signal })
+        if (refreshed) {
+          snapshot = refreshed
+          const ranked = targetDescription
+            ? findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? 'click')
+            : []
+          if (ranked[0] && ranked[0].score >= 0.55 &&
+              (!ranked[1] || ranked[0].score - ranked[1].score >= 0.05)) {
+            matched = ranked[0].element
+            break
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      if (!matched) {
+        throw new Error(`Step ${step.order} timed out waiting for ${targetDescription ? `the next step target "${targetDescription}"` : `"${manualWaitTarget(step.action) ?? 'the requested page element'}"`} to appear in fresh browser snapshots. No later screen evidence was collected.`)
+      }
+      evidence.push({
+        kind: 'snapshot',
+        detail: `Step ${step.order} explicit wait completed: observed ${matched.role ?? 'element'} "${matched.name ?? targetDescription}" in a fresh browser snapshot before continuing.`,
+        source: browser.provenance ?? navigation.source,
+      })
+      continue
+    }
+
     const explicitUrl = extractStepUrl(step.action)
     if (explicitUrl) {
       if (normalizeUrl(explicitUrl) !== normalizeUrl(currentUrl)) {
@@ -740,7 +773,7 @@ export async function gatherEvidenceForTestCase(
     if (!ready.ok) {
       throw new Error(`${label} did not reach both the load and network-idle states: ${ready.error ?? 'browser readiness wait failed'}.`)
     }
-    if (/networkidle timed out/i.test(ready.output ?? '')) {
+    if (/networkidle timed out|MCP (?:waited|captured)/i.test(ready.output ?? '')) {
       evidence.push({
         kind: 'eval',
         detail: `${label}: ${ready.output}`,
@@ -1080,6 +1113,18 @@ function parseSnapshotTargetSelection(text: string): { ref?: string; confidence?
 
 function isLocatorAction(action: string): boolean {
   return /^\s*(?:\d+[.)]\s*)?(?:click|tap|enter|type|fill|input|select|choose|check|uncheck|hover)\b/i.test(action)
+}
+
+function isManualWaitStep(action: string): boolean {
+  return /^\s*(?:\d+[.)]\s*)?wait\s+(?:until\s+|for\s+)?(?:the\s+)?/i.test(action)
+}
+
+function manualWaitTarget(action: string): string | undefined {
+  return action
+    .replace(/^\s*(?:\d+[.)]\s*)?wait\s+(?:until\s+|for\s+)?(?:the\s+)?/i, '')
+    .replace(/\s+(?:is|becomes?)\s+(?:visible|shown|displayed|ready).*$/i, '')
+    .replace(/[.!?]+$/, '')
+    .trim() || undefined
 }
 
 function isLocatorAssertionStep(action: string): boolean {

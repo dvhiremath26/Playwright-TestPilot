@@ -121,6 +121,10 @@ Verified in the current workspace:
   builds also include step-by-step inspection,
   isolated CLI/MCP sessions, and bounded page-readiness waits. A live extension-host run
   against the user's SAP application remains unverified.
+- VS Code extension build 0.1.60 supports explicit manual waits such as “wait for Search bar
+  to be visible.” On MCP servers without code execution, it takes a fresh snapshot and polls
+  for the next action's observed target instead of failing because load/networkidle cannot be
+  queried directly. That fallback records that networkidle was not independently verified.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of
   `npm run check` and is not called by the extension generation path.
 - The last recorded full check passed 154 tests before the latest model-generation changes;

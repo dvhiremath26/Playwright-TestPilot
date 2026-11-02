@@ -286227,10 +286227,27 @@ var PlaywrightMcpAdapter = class {
   }
   async waitForPageReady(options) {
     const runCodeTool = ["browser_run_code_unsafe", "browser_run_code"].find((name) => this.toolSchemas.has(name));
-    if (!runCodeTool) {
-      return { ok: false, error: "Playwright MCP does not expose a Playwright code tool required to wait for load and networkidle." };
+    if (runCodeTool) {
+      return this.call(runCodeTool, { code: PAGE_READINESS_CODE }, options);
     }
-    return this.call(runCodeTool, { code: PAGE_READINESS_CODE }, options);
+    if (this.toolSchemas.has("browser_wait_for")) {
+      const waited = await this.call("browser_wait_for", { time: 2 }, options);
+      if (!waited.ok) return waited;
+      const observed2 = await this.snapshot(void 0, options);
+      if (!observed2.ok) {
+        return { ok: false, error: `MCP timed settle completed but a fresh snapshot failed: ${observed2.error ?? "no snapshot returned"}` };
+      }
+      return {
+        ok: true,
+        output: "MCP waited 2 seconds and captured a fresh snapshot; this server does not expose load/networkidle state to TestPilot."
+      };
+    }
+    const observed = await this.snapshot(void 0, options);
+    if (!observed.ok) return observed;
+    return {
+      ok: true,
+      output: "MCP captured a fresh snapshot; this server exposes no load/networkidle wait, so the next manual-step target must be awaited from browser evidence."
+    };
   }
   async snapshot(target, options) {
     return this.call("browser_snapshot", target ? { target } : {}, options);
@@ -287026,6 +287043,35 @@ async function gatherEvidenceForTestCase(browser, options) {
   try {
     for (const [stepIndex, step] of options.steps.entries()) {
       if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
+      if (isManualWaitStep(step.action)) {
+        const awaitedStep = options.steps.slice(stepIndex + 1).find((candidate) => isLocatorAction(candidate.action));
+        const awaitedAction = awaitedStep ? parseReplayAction(awaitedStep.action) : void 0;
+        const targetDescription = awaitedAction?.target ?? manualWaitTarget(step.action);
+        const deadline = Date.now() + 2e4;
+        let matched;
+        while (Date.now() < deadline) {
+          if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
+          const refreshed = await browser.capture(void 0, { signal: options.signal });
+          if (refreshed) {
+            snapshot = refreshed;
+            const ranked = targetDescription ? findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? "click") : [];
+            if (ranked[0] && ranked[0].score >= 0.55 && (!ranked[1] || ranked[0].score - ranked[1].score >= 0.05)) {
+              matched = ranked[0].element;
+              break;
+            }
+          }
+          await new Promise((resolve5) => setTimeout(resolve5, 500));
+        }
+        if (!matched) {
+          throw new Error(`Step ${step.order} timed out waiting for ${targetDescription ? `the next step target "${targetDescription}"` : `"${manualWaitTarget(step.action) ?? "the requested page element"}"`} to appear in fresh browser snapshots. No later screen evidence was collected.`);
+        }
+        evidence.push({
+          kind: "snapshot",
+          detail: `Step ${step.order} explicit wait completed: observed ${matched.role ?? "element"} "${matched.name ?? targetDescription}" in a fresh browser snapshot before continuing.`,
+          source: browser.provenance ?? navigation.source
+        });
+        continue;
+      }
       const explicitUrl = extractStepUrl(step.action);
       if (explicitUrl) {
         if (normalizeUrl(explicitUrl) !== normalizeUrl(currentUrl)) {
@@ -287224,7 +287270,7 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
     if (!ready.ok) {
       throw new Error(`${label} did not reach both the load and network-idle states: ${ready.error ?? "browser readiness wait failed"}.`);
     }
-    if (/networkidle timed out/i.test(ready.output ?? "")) {
+    if (/networkidle timed out|MCP (?:waited|captured)/i.test(ready.output ?? "")) {
       evidence.push({
         kind: "eval",
         detail: `${label}: ${ready.output}`,
@@ -287492,6 +287538,12 @@ function parseSnapshotTargetSelection(text) {
 }
 function isLocatorAction(action) {
   return /^\s*(?:\d+[.)]\s*)?(?:click|tap|enter|type|fill|input|select|choose|check|uncheck|hover)\b/i.test(action);
+}
+function isManualWaitStep(action) {
+  return /^\s*(?:\d+[.)]\s*)?wait\s+(?:until\s+|for\s+)?(?:the\s+)?/i.test(action);
+}
+function manualWaitTarget(action) {
+  return action.replace(/^\s*(?:\d+[.)]\s*)?wait\s+(?:until\s+|for\s+)?(?:the\s+)?/i, "").replace(/\s+(?:is|becomes?)\s+(?:visible|shown|displayed|ready).*$/i, "").replace(/[.!?]+$/, "").trim() || void 0;
 }
 function isLocatorAssertionStep(action) {
   return /^\s*(?:\d+[.)]\s*)?(?:validate|verify|assert|expect|check)\b/i.test(action);

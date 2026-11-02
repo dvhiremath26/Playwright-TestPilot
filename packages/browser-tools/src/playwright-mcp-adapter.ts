@@ -121,10 +121,35 @@ export class PlaywrightMcpAdapter implements BrowserTool {
   async waitForPageReady(options?: BrowserCallOptions): Promise<BrowserActionResult> {
     const runCodeTool = ['browser_run_code_unsafe', 'browser_run_code']
       .find((name) => this.toolSchemas.has(name))
-    if (!runCodeTool) {
-      return { ok: false, error: 'Playwright MCP does not expose a Playwright code tool required to wait for load and networkidle.' }
+    if (runCodeTool) {
+      return this.call(runCodeTool, { code: PAGE_READINESS_CODE }, options)
     }
-    return this.call(runCodeTool, { code: PAGE_READINESS_CODE }, options)
+
+    // Some MCP deployments disable arbitrary code execution. Use the server's
+    // bounded wait tool and a fresh accessibility snapshot as a safe settle fallback.
+    // This cannot certify networkidle, so the result says so explicitly.
+    if (this.toolSchemas.has('browser_wait_for')) {
+      const waited = await this.call('browser_wait_for', { time: 2 }, options)
+      if (!waited.ok) return waited
+      const observed = await this.snapshot(undefined, options)
+      if (!observed.ok) {
+        return { ok: false, error: `MCP timed settle completed but a fresh snapshot failed: ${observed.error ?? 'no snapshot returned'}` }
+      }
+      return {
+        ok: true,
+        output: 'MCP waited 2 seconds and captured a fresh snapshot; this server does not expose load/networkidle state to TestPilot.',
+      }
+    }
+
+    // MCP variants differ in which optional wait tools they publish. A snapshot is
+    // still a useful bounded synchronization point; the runner performs explicit
+    // polling for the next manual-step target before acting on it.
+    const observed = await this.snapshot(undefined, options)
+    if (!observed.ok) return observed
+    return {
+      ok: true,
+      output: 'MCP captured a fresh snapshot; this server exposes no load/networkidle wait, so the next manual-step target must be awaited from browser evidence.',
+    }
   }
 
   async snapshot(target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {

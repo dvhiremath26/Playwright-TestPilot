@@ -289236,6 +289236,10 @@ var WorkspaceService = class {
         browser = createBrowserSession({
           repositoryRoot: cfg.frameworkRepo,
           workingDirectory: browserWorkingDirectory,
+          // Show the primary CLI browser so interactive SSO/MFA challenges such
+          // as PingID number matching are visible while snapshots are captured.
+          // The adapter still creates a fresh, non-persistent session per run.
+          cli: { headed: true },
           mcp: {
             // Spawn only after the CLI primary fails. Use cmd.exe explicitly on Windows
             // because npm exposes npx as a .cmd shim that spawn(shell:false) cannot run.

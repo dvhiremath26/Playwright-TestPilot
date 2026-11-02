@@ -136,6 +136,9 @@ Verified in the current workspace:
 - VS Code extension build 0.1.63 waits up to 60 seconds for explicit manual wait steps and detects
   PingID/MFA prompt text in the browser snapshot. It reports the prompt in the sidebar and through
   a VS Code notification so the user can approve it on their registered device before the wait ends.
+- VS Code extension build 0.1.64 launches the primary Playwright CLI browser in headed mode, so
+  SSO/MFA number-matching screens are visible. The CLI session remains unique and non-persistent;
+  Playwright MCP remains headed by default and isolated.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of
   `npm run check` and is not called by the extension generation path.
 - The last recorded full check passed 154 tests before the latest model-generation changes;

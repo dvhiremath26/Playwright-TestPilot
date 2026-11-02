@@ -286180,7 +286180,7 @@ function runChild(command, args, opts) {
 
 // packages/browser-tools/src/playwright-mcp-adapter.ts
 var import_node_child_process3 = require("node:child_process");
-var DEFAULT_TIMEOUT_MS2 = 3e4;
+var DEFAULT_TIMEOUT_MS2 = 75e3;
 var INIT_TIMEOUT_MS = 15e3;
 var MAX_STDOUT_BYTES = 256 * 1024;
 var PlaywrightMcpAdapter = class {
@@ -287261,13 +287261,25 @@ async function gatherEvidenceForTestCase(browser, options) {
           { signal: options.signal }
         );
         const clickTriggeredNavigationWaitTimeout = action.kind === "click" && !result.ok && isClickNavigationWaitTimeout(result.error);
-        if (!result.ok && !clickTriggeredNavigationWaitTimeout) {
+        let mcpTimeoutProgressed = false;
+        if (action.kind === "click" && !result.ok && isMcpToolCallTimeout(result.error)) {
+          const nextStep = options.steps.slice(stepIndex + 1).find((candidate) => isLocatorAction(candidate.action));
+          const nextAction = nextStep ? parseReplayAction(nextStep.action) : void 0;
+          if (nextAction) {
+            const afterTimeout = await browser.capture(void 0, { signal: options.signal });
+            if (afterTimeout && browserSnapshotSignature(afterTimeout) !== browserSnapshotSignature(preActionSnapshot) && findActionTarget(afterTimeout, nextAction.target, nextAction.kind)) {
+              snapshot = afterTimeout;
+              mcpTimeoutProgressed = true;
+            }
+          }
+        }
+        if (!result.ok && !clickTriggeredNavigationWaitTimeout && !mcpTimeoutProgressed) {
           throw new Error(`Step ${step.order} could not be replayed safely: ${result.error ?? "browser action failed"}. No later screen evidence was collected.`);
         }
         if (!sidebarTrialForStep) await waitForPageReady(`Step ${step.order} action`);
         evidence.push({
           kind: "interaction",
-          detail: sidebarTrialForStep ? `Step ${step.order} selected sidebar locator ${target.ref} after candidate attempt ${sidebarTrialForStep.attempt}; the following step's target was visible: ${step.action}` : clickTriggeredNavigationWaitTimeout ? `Step ${step.order} click completed, but the CLI timed out waiting for the scheduled navigation; the flow continued without repeating the click: ${step.action}` : `Step ${step.order} replayed: ${step.action}`,
+          detail: sidebarTrialForStep ? `Step ${step.order} selected sidebar locator ${target.ref} after candidate attempt ${sidebarTrialForStep.attempt}; the following step's target was visible: ${step.action}` : clickTriggeredNavigationWaitTimeout ? `Step ${step.order} click completed, but the CLI timed out waiting for the scheduled navigation; the flow continued without repeating the click: ${step.action}` : mcpTimeoutProgressed ? `Step ${step.order} MCP click timed out, but a fresh snapshot confirmed a changed screen and the next step's target; the click was not repeated: ${step.action}` : `Step ${step.order} replayed: ${step.action}`,
           source: result.provenance ?? browser.provenance ?? navigation.source
         });
         const location = sidebarTrialForStep ? void 0 : await browser.execute(
@@ -287551,6 +287563,9 @@ function textMatchScore(candidate, wanted) {
 }
 function isClickNavigationWaitTimeout(error) {
   return Boolean(error && /click action done/i.test(error) && /waiting for scheduled navigations/i.test(error) && /timeout/i.test(error));
+}
+function isMcpToolCallTimeout(error) {
+  return Boolean(error && /MCP request ["']tools\/call["'] timed out/i.test(error));
 }
 function parseSnapshotTargetSelection(text) {
   const normalized = text.trim().replace(/^```(?:json)?\s*|\s*```$/gi, "").trim();
@@ -287972,11 +287987,19 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
   for (let correction = 0; correction < maxCorrections && needsCorrection(changes); correction++) {
     const issues = standardIssues(changes);
     const dataIssues = manualTestData ? manualDataUsageIssues(changes, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow) : [];
+    const failedStepOrders = new Set(issues.flatMap((issue) => {
+      const order = issue.match(/manual step\s+(\d+)/i)?.[1];
+      return order ? [Number(order)] : [];
+    }));
+    const exactStepLocators = (options.task.browserLocatorCandidates ?? []).filter((candidate) => candidate.stepOrder !== void 0 && failedStepOrders.has(candidate.stepOrder)).map((candidate) => `- Step ${candidate.stepOrder} on ${candidate.pageUrl ?? "observed screen"}: ${candidate.expression}`);
+    const locatorCorrectionGuidance = exactStepLocators.length > 0 ? `Exact observed locator candidates for the rejected steps (copy the role and name exactly; do not change an observed button/link into an option):
+${[...new Set(exactStepLocators)].join("\n")}` : "";
     const correctionPrompt = [
       "Your previous response was rejected and no files have been written.",
       !hasSpec(changes) ? "It did not contain a runnable TypeScript test spec with a test(...) declaration." : "",
       ...issues.length > 0 ? [`It violated these discovered framework standards:
 ${issues.map((issue) => `- ${issue}`).join("\n")}`] : [],
+      locatorCorrectionGuidance,
       ...dataIssues.length > 0 ? [`It failed to use the extracted test data:
 ${dataIssues.map((issue) => `- ${issue}`).join("\n")}`] : [],
       "Return the complete file set again. Implement every manual step in order; the generated code does not need to repeat the manual wording verbatim. Correct every listed standards violation and copy the architecture from the real source examples where needed. For new page behavior, create page-object/locator code using matching browser observations; never invent a selector that is absent from evidence. Every new locator expression must exactly match an expression in the Playwright CLI observations or an indexed framework locator. For data-driven text assertions, a locator-class method may accept the expected value and use getByText(expectedValue) only when a literal getByText candidate for that assertion is present in the matching snapshot evidence; pass the value from the data row. If evidence is insufficient, do not invent a locator or leave a guessed CSS selector with an adjustment comment; keep the specific step unresolved and explain which live snapshot is missing.",
@@ -288104,7 +288127,9 @@ function findScreenPageArchitectureIssues(changes, cases, repositoryRoot) {
     const locatorPath = pagePath.replace(/\.page\.tsx?$/i, ".locators.ts");
     const locator = changes.find((change) => change.path === locatorPath);
     const locatorSource = locator?.newContent ?? ((0, import_node_fs7.existsSync)((0, import_node_path9.join)(repositoryRoot, locatorPath)) ? (0, import_node_fs7.readFileSync)((0, import_node_path9.join)(repositoryRoot, locatorPath), "utf-8") : "");
-    if (!locatorSource || !/export\s+class\s+\w+Locators\b/.test(locatorSource) || !new RegExp(`from\\s+['"]\\./${(0, import_node_path9.basename)(locatorPath).replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}['"]`).test(source)) {
+    const locatorModule = (0, import_node_path9.basename)(locatorPath).replace(/\.ts$/i, "");
+    const locatorImportPattern = new RegExp(`from\\s+['"]\\./${escapeRegExp(locatorModule)}(?:\\.tsx?)?['"]`);
+    if (!locatorSource || !/export\s+class\s+\w+Locators\b/.test(locatorSource) || !locatorImportPattern.test(source)) {
       issues.push(`${pagePath} must have a paired locator class in '${locatorPath}' and import that class.`);
     }
     if (!new RegExp(`new\\s+${className}\\s*\\(`).test(specSource)) {
@@ -288298,7 +288323,25 @@ function findManualStepCoverageIssues(changes, testCases) {
     const awaitedLocators = awaitedLines.flatMap(
       (line) => [...line.matchAll(/\b(?:locators|locator)\.([A-Za-z_$][\w$]*)/g)].map((match) => match[1] ?? "")
     );
-    const bodyWords = new Set(normalizeCoverageText([...awaitedCalls, ...awaitedLocators].join(" ")).split(" ").filter(Boolean));
+    const invokedPageMethods = [...body.matchAll(/\bawait\s+[A-Za-z_$][\w$]*\.([A-Za-z_$][\w$]*)\s*\(/g)].map((match) => match[1] ?? "");
+    const pageMethodContext = invokedPageMethods.flatMap((methodName) => {
+      const escaped = escapeRegExp(methodName);
+      const declaration = new RegExp(`\\basync\\s+${escaped}\\s*\\([^)]*\\)[^{]*\\{`).exec(
+        changes.filter((change) => /^pages\/.+\.page\.tsx?$/.test(change.path)).map((change) => change.newContent ?? "").join("\n")
+      );
+      if (!declaration || declaration.index === void 0) return [];
+      const source = changes.filter((change) => /^pages\/.+\.page\.tsx?$/.test(change.path)).map((change) => change.newContent ?? "").join("\n");
+      const openBrace = declaration.index + declaration[0].lastIndexOf("{");
+      const closeBrace = findMatchingBrace(source, openBrace);
+      const stepAnnotation = source.lastIndexOf("@Step", declaration.index);
+      return [source.slice(stepAnnotation >= 0 ? stepAnnotation : declaration.index, closeBrace >= 0 ? closeBrace + 1 : openBrace + 1)];
+    });
+    const bodyWords = new Set(normalizeCoverageText([
+      ...awaitedCalls,
+      ...awaitedLocators,
+      ...invokedPageMethods,
+      ...pageMethodContext
+    ].join(" ")).split(" ").filter(Boolean));
     for (const step of actions) {
       if (isLocatorAssertionStep(step.action)) {
         if (!/\b(?:expect|assert|validate|verify|toBe|toHave|toContain)\w*/i.test(body)) {

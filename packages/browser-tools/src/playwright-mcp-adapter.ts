@@ -31,7 +31,9 @@ import type {
   BrowserToolInfo,
 } from './browser-types.ts'
 
-const DEFAULT_TIMEOUT_MS = 30_000
+// Enterprise pages can be slow to respond after sign-in or SPA navigation.
+// Keep tool calls alive long enough for the browser to settle and return evidence.
+const DEFAULT_TIMEOUT_MS = 75_000
 /** MCP servers can be slow to first respond; allow a bit more on initialize. */
 const INIT_TIMEOUT_MS = 15_000
 

@@ -145,6 +145,11 @@ Verified in the current workspace:
 - VS Code extension build 0.1.66 lets the selected model name screen page/locator classes from the
   manual steps and browser evidence; validation checks that multi-screen flows have separate,
   paired framework page/locator classes without prescribing fixed screen names.
+- VS Code extension build 0.1.67 accepts standard extensionless TypeScript imports when checking
+  page/locator pairs, checks page-method step annotations during coverage validation, provides
+  step-specific observed locator candidates during corrections, and allows MCP calls 75 seconds.
+  After an MCP click timeout, it checks the next step's target in a fresh snapshot without retrying
+  the click.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of
   `npm run check` and is not called by the extension generation path.
 - The last recorded full check passed 154 tests before the latest model-generation changes;

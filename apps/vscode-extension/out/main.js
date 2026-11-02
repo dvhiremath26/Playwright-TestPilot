@@ -35654,8 +35654,8 @@ var require_readdir_glob = __commonJS({
           useStat = true;
         }
         const filename = dir + "/" + name;
-        const relative2 = filename.slice(1);
-        const absolute = path3 + "/" + relative2;
+        const relative3 = filename.slice(1);
+        const absolute = path3 + "/" + relative3;
         let stats = null;
         if (useStat || followSymlinks) {
           stats = await stat(absolute, followSymlinks);
@@ -35667,12 +35667,12 @@ var require_readdir_glob = __commonJS({
           stats = { isDirectory: () => false };
         }
         if (stats.isDirectory()) {
-          if (!shouldSkip(relative2)) {
-            yield { relative: relative2, absolute, stats };
+          if (!shouldSkip(relative3)) {
+            yield { relative: relative3, absolute, stats };
             yield* exploreWalkAsync(filename, path3, followSymlinks, useStat, shouldSkip, false);
           }
         } else {
-          yield { relative: relative2, absolute, stats };
+          yield { relative: relative3, absolute, stats };
         }
       }
     }
@@ -35742,11 +35742,11 @@ var require_readdir_glob = __commonJS({
         }
         setTimeout(() => this._next(), 0);
       }
-      _shouldSkipDirectory(relative2) {
-        return this.skipMatchers.some((m) => m.match(relative2));
+      _shouldSkipDirectory(relative3) {
+        return this.skipMatchers.some((m) => m.match(relative3));
       }
-      _fileMatches(relative2, isDirectory) {
-        const file = relative2 + (isDirectory ? "/" : "");
+      _fileMatches(relative3, isDirectory) {
+        const file = relative3 + (isDirectory ? "/" : "");
         return (this.matchers.length === 0 || this.matchers.some((m) => m.match(file))) && !this.ignoreMatchers.some((m) => m.match(file)) && (!this.options.nodir || !isDirectory);
       }
       _next() {
@@ -35755,16 +35755,16 @@ var require_readdir_glob = __commonJS({
             if (!obj2.done) {
               const isDirectory = obj2.value.stats.isDirectory();
               if (this._fileMatches(obj2.value.relative, isDirectory)) {
-                let relative2 = obj2.value.relative;
+                let relative3 = obj2.value.relative;
                 let absolute = obj2.value.absolute;
                 if (this.options.mark && isDirectory) {
-                  relative2 += "/";
+                  relative3 += "/";
                   absolute += "/";
                 }
                 if (this.options.stat) {
-                  this.emit("match", { relative: relative2, absolute, stat: obj2.value.stats });
+                  this.emit("match", { relative: relative3, absolute, stat: obj2.value.stats });
                 } else {
-                  this.emit("match", { relative: relative2, absolute });
+                  this.emit("match", { relative: relative3, absolute });
                 }
               }
               this._next(this.iterator);
@@ -81198,11 +81198,11 @@ ${lanes.join("\n")}
           return toComponents;
         }
         const components = toComponents.slice(start);
-        const relative2 = [];
+        const relative3 = [];
         for (; start < fromComponents.length; start++) {
-          relative2.push("..");
+          relative3.push("..");
         }
-        return ["", ...relative2, ...components];
+        return ["", ...relative3, ...components];
       }
       function getRelativePathFromDirectory(fromDirectory, to, getCanonicalFileNameOrIgnoreCase) {
         Debug.assert(getRootLength(fromDirectory) > 0 === getRootLength(to) > 0, "Paths must either both be absolute or both be relative");
@@ -125681,9 +125681,9 @@ ${lanes.join("\n")}
               if (!startsWithDirectory(target, realPathDirectory, getCanonicalFileName)) {
                 return;
               }
-              const relative2 = getRelativePathFromDirectory(realPathDirectory, target, getCanonicalFileName);
+              const relative3 = getRelativePathFromDirectory(realPathDirectory, target, getCanonicalFileName);
               for (const symlinkDirectory of symlinkDirectories) {
-                const option = resolvePath(symlinkDirectory, relative2);
+                const option = resolvePath(symlinkDirectory, relative3);
                 const result2 = cb(option, target === referenceRedirect);
                 shouldFilterIgnoredPaths = true;
                 if (result2) return result2;
@@ -283805,8 +283805,8 @@ var Workspace = class {
     if (!this.allowSymlinks && this.chainContainsSymlink(joined)) {
       return null;
     }
-    const relative2 = import_node_path3.default.relative(this.root, real).split(import_node_path3.default.sep).join("/");
-    return { resolved: real, relative: relative2 };
+    const relative3 = import_node_path3.default.relative(this.root, real).split(import_node_path3.default.sep).join("/");
+    return { resolved: real, relative: relative3 };
   }
   verifyAncestors(joined) {
     let dir = import_node_path3.default.dirname(joined);
@@ -283816,8 +283816,8 @@ var Workspace = class {
         if (!this.isPathInside(real)) return null;
         if (this.chainContainsSymlink(dir)) return null;
         const resolved = real === dir ? joined : `${real}/${joined.slice(dir.length)}`;
-        const relative2 = import_node_path3.default.relative(this.root, resolved).split(import_node_path3.default.sep).join("/");
-        return { resolved, relative: relative2 };
+        const relative3 = import_node_path3.default.relative(this.root, resolved).split(import_node_path3.default.sep).join("/");
+        return { resolved, relative: relative3 };
       } catch {
         const parent = import_node_path3.default.dirname(dir);
         if (parent === dir) return null;
@@ -288050,7 +288050,26 @@ ${remainingStandardsIssues.map((issue) => `- ${issue}`).join("\n")}`
     );
   }
   if (manualTestData) {
-    const dataUseIssues = manualDataUsageIssues(changes, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow);
+    let dataUseIssues = manualDataUsageIssues(changes, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow);
+    let usedDirectJsonFallback = false;
+    if (dataUseIssues.length > 0 && supportsJsonModuleImports(options.repositoryRoot)) {
+      const directJsonChanges = applyDirectJsonDataFallback(changes, manualTestData);
+      const directJsonIssues = manualDataUsageIssues(
+        directJsonChanges,
+        manualTestData,
+        options.repositoryRoot,
+        targetPagePath,
+        targetLocatorPath,
+        frameworkExamples.dataLoaderImportPath,
+        multiScreenFlow,
+        "direct-json"
+      );
+      if (directJsonIssues.length === 0) {
+        changes = directJsonChanges;
+        dataUseIssues = [];
+        usedDirectJsonFallback = true;
+      }
+    }
     if (dataUseIssues.length > 0) {
       throw new Error(`The selected Copilot model did not wire the extracted manual test data after two automatic correction attempts. No files were written:
 ${dataUseIssues.map((issue) => `- ${issue}`).join("\n")}`);
@@ -288058,7 +288077,7 @@ ${dataUseIssues.map((issue) => `- ${issue}`).join("\n")}`);
     changes = changes.filter(
       (change) => !([targetPagePath, targetLocatorPath].includes(change.path) && (0, import_node_fs7.existsSync)((0, import_node_path9.join)(options.repositoryRoot, change.path))) && change.path !== targetDataPath && change.path !== "src/utils/testData/dataTypes.ts"
     );
-    changes.push(...buildManualDataChanges(options.repositoryRoot, targetDataPath, manualTestData));
+    changes.push(...buildManualDataChanges(options.repositoryRoot, targetDataPath, manualTestData).filter((change) => !usedDirectJsonFallback || change.path !== "src/utils/testData/dataTypes.ts"));
   } else {
     changes = changes.filter(
       (change) => !([targetPagePath, targetLocatorPath].includes(change.path) && (0, import_node_fs7.existsSync)((0, import_node_path9.join)(options.repositoryRoot, change.path)))
@@ -288201,11 +288220,70 @@ function readExistingJson(repositoryRoot, relativePath) {
   if (!(0, import_node_fs7.existsSync)(path3)) return void 0;
   return (0, import_node_fs7.readFileSync)(path3, "utf-8").slice(0, 12e3);
 }
-function manualDataUsageIssues(changes, data, repositoryRoot, targetPagePath, targetLocatorPath, expectedDataLoaderImportPath, multiScreenFlow = false) {
+function supportsJsonModuleImports(repositoryRoot) {
+  const tsconfigPath = (0, import_node_path9.join)(repositoryRoot, "tsconfig.json");
+  if (!(0, import_node_fs7.existsSync)(tsconfigPath)) return false;
+  try {
+    const source = (0, import_node_fs7.readFileSync)(tsconfigPath, "utf-8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g, "");
+    return /"resolveJsonModule"\s*:\s*true\b/.test(source);
+  } catch {
+    return false;
+  }
+}
+function applyDirectJsonDataFallback(changes, data) {
+  const jsonImportName = `${data.moduleName}Json`;
+  return changes.map((change) => {
+    if (!/(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, "/")}`)) return change;
+    let source = change.newContent ?? "";
+    const dataVariable = source.match(new RegExp(
+      `(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)`
+    ))?.[1];
+    source = source.replace(/^import\s+\{\s*DataLoader\s*\}\s+from\s+['"][^'"]+['"]\s*;?\s*\r?\n/gm, "");
+    if (dataVariable) {
+      source = source.replace(new RegExp(
+        `^\\s*(?:const|let)\\s+${escapeRegExp(dataVariable)}\\s*=\\s*DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)\\s*;?\\s*\\r?\\n`,
+        "gm"
+      ), "");
+      source = source.replace(new RegExp(`\\b${escapeRegExp(dataVariable)}\\s*\\[\\s*(['"])([^'"]+)\\1\\s*\\]`, "g"), `${jsonImportName}['$2']`);
+      source = source.replace(new RegExp(`\\b${escapeRegExp(dataVariable)}\\s*\\.\\s*([A-Za-z_$][\\w$]*)`, "g"), `${jsonImportName}.$1`);
+    }
+    source = source.replace(new RegExp(`DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)`, "g"), jsonImportName);
+    for (const testCase of data.cases) {
+      const row = `${jsonImportName}['${testCase.caseKey}']`;
+      source = source.replace(new RegExp(`${escapeRegExp(jsonImportName)}\\s*\\[\\s*['"]${escapeRegExp(testCase.caseKey)}['"]\\s*\\]\\s*\\.\\s*values\\b`, "g"), row);
+      const titlePattern = new RegExp(`\\btest\\s*\\(\\s*(['"\`])${escapeRegExp(testCase.title)}\\1`);
+      const titleMatch = titlePattern.exec(source);
+      if (!titleMatch) continue;
+      const start = titleMatch.index;
+      const nextTest = source.slice(start + titleMatch[0].length).search(/\n\s*test\s*\(/);
+      const end = nextTest < 0 ? source.length : start + titleMatch[0].length + nextTest;
+      let block = source.slice(start, end);
+      for (const [key, value] of Object.entries(testCase.values)) {
+        const valuePattern = new RegExp(`((?:\\(|,)\\s*)(['"])${escapeRegExp(value)}\\2(?=\\s*[,);])`, "g");
+        block = block.replace(valuePattern, `$1${row}.${key}`);
+      }
+      source = source.slice(0, start) + block + source.slice(end);
+    }
+    const importPath = (0, import_node_path9.relative)((0, import_node_path9.dirname)(change.path), data.targetPath).replace(/\\/g, "/");
+    const specifier = importPath.startsWith(".") ? importPath : `./${importPath}`;
+    const importLine = `import ${jsonImportName} from '${specifier}'
+`;
+    const firstImport = source.match(/^import\s/m);
+    source = firstImport ? source.slice(0, firstImport.index) + importLine + source.slice(firstImport.index) : importLine + source;
+    return {
+      ...change,
+      newContent: source,
+      reason: `${change.reason ?? ""} DataLoader wiring was invalid, so the scenario JSON is imported directly as the configured fallback.`.trim(),
+      evidence: [...change.evidence ?? [], "Used the framework-supported direct JSON import fallback after DataLoader wiring failed validation."]
+    };
+  });
+}
+function manualDataUsageIssues(changes, data, repositoryRoot, targetPagePath, targetLocatorPath, expectedDataLoaderImportPath, multiScreenFlow = false, accessMode = "data-loader") {
   const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, "/")}`));
   if (specs.length === 0) return ["No spec was returned to verify DataLoader usage."];
   const issues = [];
   const modulePattern = new RegExp(`DataLoader\\.get\\(\\s*['"]${data.moduleName}['"]\\s*\\)`);
+  const jsonImportName = `${data.moduleName}Json`;
   const pageName = data.moduleName.charAt(0).toUpperCase() + data.moduleName.slice(1);
   const pageImport = `@pages/${pageName}/${data.moduleName}.page`;
   for (const spec of specs) {
@@ -288214,14 +288292,21 @@ function manualDataUsageIssues(changes, data, repositoryRoot, targetPagePath, ta
     if (data.sharedFlow && !source.includes(`from '${pageImport}'`) && !source.includes(`from "${pageImport}"`)) {
       issues.push(`${spec.path} must import the shared scenario page object from '${pageImport}'.`);
     }
-    if (expectedDataLoaderImportPath && dataLoaderImport?.[1] !== expectedDataLoaderImportPath) {
+    const jsonImport = source.match(new RegExp(`import\\s+${escapeRegExp(jsonImportName)}\\s+from\\s+['"]([^'"]+)['"]`));
+    if (accessMode === "data-loader" && expectedDataLoaderImportPath && dataLoaderImport?.[1] !== expectedDataLoaderImportPath) {
       issues.push(`${spec.path} must import DataLoader from '${expectedDataLoaderImportPath}' to match the target framework.`);
     }
-    if (!modulePattern.test(source)) issues.push(`${spec.path} must load the shared '${data.moduleName}' module through DataLoader.`);
+    if (accessMode === "data-loader" && !modulePattern.test(source)) issues.push(`${spec.path} must load the shared '${data.moduleName}' module through DataLoader.`);
+    if (accessMode === "direct-json") {
+      const expectedPath = (0, import_node_path9.relative)((0, import_node_path9.dirname)(spec.path), data.targetPath).replace(/\\/g, "/");
+      const expectedSpecifier = expectedPath.startsWith(".") ? expectedPath : `./${expectedPath}`;
+      if (jsonImport?.[1] !== expectedSpecifier) issues.push(`${spec.path} must import the generated '${data.targetPath}' JSON directly using its relative path.`);
+      if (dataLoaderImport || /DataLoader\s*\.\s*get\s*\(/.test(source)) issues.push(`${spec.path} must use the direct JSON import consistently after the DataLoader fallback.`);
+    }
   }
   const generatedCode = changes.filter((change) => /\.tsx?$/.test(change.path) && change.path !== "src/utils/testData/dataTypes.ts").map((change) => change.newContent ?? "").join("\n");
   const combinedSource = specs.map((spec) => spec.newContent ?? "").join("\n");
-  const dataVariable = combinedSource.match(new RegExp(
+  const dataVariable = accessMode === "direct-json" ? combinedSource.match(new RegExp(`import\\s+(${escapeRegExp(jsonImportName)})\\s+from`))?.[1] : combinedSource.match(new RegExp(
     `(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)`
   ))?.[1];
   if (/\bObject\s*\.\s*(?:keys|entries|values)\s*\(|\btest\s*(?:\.\s*each|\.\s*describe\s*\.\s*each)\s*\(|\b(?:testCases|cases)\s*\.\s*(?:map|forEach)\s*\(/.test(combinedSource)) {
@@ -288245,7 +288330,7 @@ function manualDataUsageIssues(changes, data, repositoryRoot, targetPagePath, ta
     }
     const module2 = escapeRegExp(data.moduleName);
     const caseKey = escapeRegExp(testCase.caseKey);
-    const directRow = new RegExp(`DataLoader\\s*\\.\\s*get\\(\\s*['"]${module2}['"]\\s*\\)\\s*\\[\\s*['"]${caseKey}['"]\\s*\\](?!\\s*\\.\\s*values\\b)`);
+    const directRow = accessMode === "direct-json" ? new RegExp(`${escapeRegExp(jsonImportName)}\\s*\\[\\s*['"]${caseKey}['"]\\s*\\](?!\\s*\\.\\s*values\\b)`) : new RegExp(`DataLoader\\s*\\.\\s*get\\(\\s*['"]${module2}['"]\\s*\\)\\s*\\[\\s*['"]${caseKey}['"]\\s*\\](?!\\s*\\.\\s*values\\b)`);
     const typedPropertyRow = dataVariable ? new RegExp(`\\b${escapeRegExp(dataVariable)}\\s*(?:\\.\\s*${caseKey}\\b|\\[\\s*['"]${caseKey}['"]\\s*\\])`) : /(?!)/;
     const valuesWrapper = new RegExp(`DataLoader\\s*\\.\\s*get\\(\\s*['"]${module2}['"]\\s*\\)\\s*\\[\\s*['"]${caseKey}['"]\\s*\\]\\s*\\.\\s*values\\b`);
     const typedValuesWrapper = dataVariable ? new RegExp(`\\b${escapeRegExp(dataVariable)}\\s*(?:\\.\\s*${caseKey}\\b|\\[\\s*['"]${caseKey}['"]\\s*\\])\\s*\\.\\s*values\\b`) : /(?!)/;

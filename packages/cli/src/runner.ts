@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 
 import type {
   AgentStage,
@@ -1936,7 +1936,26 @@ export async function generateChangesFromProvider(
     )
   }
   if (manualTestData) {
-    const dataUseIssues = manualDataUsageIssues(changes, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow)
+    let dataUseIssues = manualDataUsageIssues(changes, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow)
+    let usedDirectJsonFallback = false
+    if (dataUseIssues.length > 0 && supportsJsonModuleImports(options.repositoryRoot)) {
+      const directJsonChanges = applyDirectJsonDataFallback(changes, manualTestData)
+      const directJsonIssues = manualDataUsageIssues(
+        directJsonChanges,
+        manualTestData,
+        options.repositoryRoot,
+        targetPagePath,
+        targetLocatorPath,
+        frameworkExamples.dataLoaderImportPath,
+        multiScreenFlow,
+        'direct-json',
+      )
+      if (directJsonIssues.length === 0) {
+        changes = directJsonChanges
+        dataUseIssues = []
+        usedDirectJsonFallback = true
+      }
+    }
     if (dataUseIssues.length > 0) {
       throw new Error(`The selected Copilot model did not wire the extracted manual test data after two automatic correction attempts. No files were written:\n${dataUseIssues.map((issue) => `- ${issue}`).join('\n')}`)
     }
@@ -1948,7 +1967,8 @@ export async function generateChangesFromProvider(
       change.path !== targetDataPath &&
       change.path !== 'src/utils/testData/dataTypes.ts',
     )
-    changes.push(...buildManualDataChanges(options.repositoryRoot, targetDataPath, manualTestData))
+    changes.push(...buildManualDataChanges(options.repositoryRoot, targetDataPath, manualTestData)
+      .filter((change) => !usedDirectJsonFallback || change.path !== 'src/utils/testData/dataTypes.ts'))
   } else {
     // Preserve shared page-object paths even when this test case has no inline data.
     changes = changes.filter((change) =>
@@ -2141,6 +2161,70 @@ function readExistingJson(repositoryRoot: string, relativePath: string): string 
   return readFileSync(path, 'utf-8').slice(0, 12000)
 }
 
+/** Direct JSON imports are a last-resort data source when generated DataLoader wiring is invalid. */
+function supportsJsonModuleImports(repositoryRoot: string): boolean {
+  const tsconfigPath = join(repositoryRoot, 'tsconfig.json')
+  if (!existsSync(tsconfigPath)) return false
+  try {
+    const source = readFileSync(tsconfigPath, 'utf-8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g, '')
+    return /"resolveJsonModule"\s*:\s*true\b/.test(source)
+  } catch {
+    return false
+  }
+}
+
+/** Replace broken DataLoader-only spec wiring with a typed import of the generated JSON module. */
+function applyDirectJsonDataFallback(changes: FileChange[], data: ExtractedManualData): FileChange[] {
+  const jsonImportName = `${data.moduleName}Json`
+  return changes.map((change) => {
+    if (!/(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, '/')}`)) return change
+    let source = change.newContent ?? ''
+    const dataVariable = source.match(new RegExp(
+      `(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)`,
+    ))?.[1]
+
+    source = source.replace(/^import\s+\{\s*DataLoader\s*\}\s+from\s+['"][^'"]+['"]\s*;?\s*\r?\n/gm, '')
+    if (dataVariable) {
+      source = source.replace(new RegExp(
+        `^\\s*(?:const|let)\\s+${escapeRegExp(dataVariable)}\\s*=\\s*DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)\\s*;?\\s*\\r?\\n`,
+        'gm',
+      ), '')
+      source = source.replace(new RegExp(`\\b${escapeRegExp(dataVariable)}\\s*\\[\\s*(['"])([^'"]+)\\1\\s*\\]`, 'g'), `${jsonImportName}['$2']`)
+      source = source.replace(new RegExp(`\\b${escapeRegExp(dataVariable)}\\s*\\.\\s*([A-Za-z_$][\\w$]*)`, 'g'), `${jsonImportName}.$1`)
+    }
+    source = source.replace(new RegExp(`DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)`, 'g'), jsonImportName)
+
+    for (const testCase of data.cases) {
+      const row = `${jsonImportName}['${testCase.caseKey}']`
+      source = source.replace(new RegExp(`${escapeRegExp(jsonImportName)}\\s*\\[\\s*['"]${escapeRegExp(testCase.caseKey)}['"]\\s*\\]\\s*\\.\\s*values\\b`, 'g'), row)
+      const titlePattern = new RegExp(`\\btest\\s*\\(\\s*(['"\x60])${escapeRegExp(testCase.title)}\\1`)
+      const titleMatch = titlePattern.exec(source)
+      if (!titleMatch) continue
+      const start = titleMatch.index
+      const nextTest = source.slice(start + titleMatch[0].length).search(/\n\s*test\s*\(/)
+      const end = nextTest < 0 ? source.length : start + titleMatch[0].length + nextTest
+      let block = source.slice(start, end)
+      for (const [key, value] of Object.entries(testCase.values)) {
+        const valuePattern = new RegExp(`((?:\\(|,)\\s*)(['"])${escapeRegExp(value)}\\2(?=\\s*[,);])`, 'g')
+        block = block.replace(valuePattern, `$1${row}.${key}`)
+      }
+      source = source.slice(0, start) + block + source.slice(end)
+    }
+
+    const importPath = relative(dirname(change.path), data.targetPath).replace(/\\/g, '/')
+    const specifier = importPath.startsWith('.') ? importPath : `./${importPath}`
+    const importLine = `import ${jsonImportName} from '${specifier}'\n`
+    const firstImport = source.match(/^import\s/m)
+    source = firstImport ? source.slice(0, firstImport.index) + importLine + source.slice(firstImport.index) : importLine + source
+    return {
+      ...change,
+      newContent: source,
+      reason: `${change.reason ?? ''} DataLoader wiring was invalid, so the scenario JSON is imported directly as the configured fallback.`.trim(),
+      evidence: [...(change.evidence ?? []), 'Used the framework-supported direct JSON import fallback after DataLoader wiring failed validation.'],
+    }
+  })
+}
+
 function manualDataUsageIssues(
   changes: FileChange[],
   data: ExtractedManualData,
@@ -2149,11 +2233,13 @@ function manualDataUsageIssues(
   targetLocatorPath: string,
   expectedDataLoaderImportPath?: string,
   multiScreenFlow = false,
+  accessMode: 'data-loader' | 'direct-json' = 'data-loader',
 ): string[] {
   const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, '/')}`))
   if (specs.length === 0) return ['No spec was returned to verify DataLoader usage.']
   const issues: string[] = []
   const modulePattern = new RegExp(`DataLoader\\.get\\(\\s*['"]${data.moduleName}['"]\\s*\\)`)
+  const jsonImportName = `${data.moduleName}Json`
   const pageName = data.moduleName.charAt(0).toUpperCase() + data.moduleName.slice(1)
   const pageImport = `@pages/${pageName}/${data.moduleName}.page`
   for (const spec of specs) {
@@ -2162,17 +2248,26 @@ function manualDataUsageIssues(
     if (data.sharedFlow && !source.includes(`from '${pageImport}'`) && !source.includes(`from "${pageImport}"`)) {
       issues.push(`${spec.path} must import the shared scenario page object from '${pageImport}'.`)
     }
-    if (expectedDataLoaderImportPath && dataLoaderImport?.[1] !== expectedDataLoaderImportPath) {
+    const jsonImport = source.match(new RegExp(`import\\s+${escapeRegExp(jsonImportName)}\\s+from\\s+['"]([^'"]+)['"]`))
+    if (accessMode === 'data-loader' && expectedDataLoaderImportPath && dataLoaderImport?.[1] !== expectedDataLoaderImportPath) {
       issues.push(`${spec.path} must import DataLoader from '${expectedDataLoaderImportPath}' to match the target framework.`)
     }
-    if (!modulePattern.test(source)) issues.push(`${spec.path} must load the shared '${data.moduleName}' module through DataLoader.`)
+    if (accessMode === 'data-loader' && !modulePattern.test(source)) issues.push(`${spec.path} must load the shared '${data.moduleName}' module through DataLoader.`)
+    if (accessMode === 'direct-json') {
+      const expectedPath = relative(dirname(spec.path), data.targetPath).replace(/\\/g, '/')
+      const expectedSpecifier = expectedPath.startsWith('.') ? expectedPath : `./${expectedPath}`
+      if (jsonImport?.[1] !== expectedSpecifier) issues.push(`${spec.path} must import the generated '${data.targetPath}' JSON directly using its relative path.`)
+      if (dataLoaderImport || /DataLoader\s*\.\s*get\s*\(/.test(source)) issues.push(`${spec.path} must use the direct JSON import consistently after the DataLoader fallback.`)
+    }
   }
   const generatedCode = changes
     .filter((change) => /\.tsx?$/.test(change.path) && change.path !== 'src/utils/testData/dataTypes.ts')
     .map((change) => change.newContent ?? '')
     .join('\n')
   const combinedSource = specs.map((spec) => spec.newContent ?? '').join('\n')
-  const dataVariable = combinedSource.match(new RegExp(
+  const dataVariable = accessMode === 'direct-json'
+    ? combinedSource.match(new RegExp(`import\\s+(${escapeRegExp(jsonImportName)})\\s+from`))?.[1]
+    : combinedSource.match(new RegExp(
     `(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)`,
   ))?.[1]
   if (/\bObject\s*\.\s*(?:keys|entries|values)\s*\(|\btest\s*(?:\.\s*each|\.\s*describe\s*\.\s*each)\s*\(|\b(?:testCases|cases)\s*\.\s*(?:map|forEach)\s*\(/.test(combinedSource)) {
@@ -2196,7 +2291,9 @@ function manualDataUsageIssues(
     }
     const module = escapeRegExp(data.moduleName)
     const caseKey = escapeRegExp(testCase.caseKey)
-    const directRow = new RegExp(`DataLoader\\s*\\.\\s*get\\(\\s*['"]${module}['"]\\s*\\)\\s*\\[\\s*['"]${caseKey}['"]\\s*\\](?!\\s*\\.\\s*values\\b)`)
+    const directRow = accessMode === 'direct-json'
+      ? new RegExp(`${escapeRegExp(jsonImportName)}\\s*\\[\\s*['"]${caseKey}['"]\\s*\\](?!\\s*\\.\\s*values\\b)`)
+      : new RegExp(`DataLoader\\s*\\.\\s*get\\(\\s*['"]${module}['"]\\s*\\)\\s*\\[\\s*['"]${caseKey}['"]\\s*\\](?!\\s*\\.\\s*values\\b)`)
     const typedPropertyRow = dataVariable
       ? new RegExp(`\\b${escapeRegExp(dataVariable)}\\s*(?:\\.\\s*${caseKey}\\b|\\[\\s*['"]${caseKey}['"]\\s*\\])`)
       : /(?!)/

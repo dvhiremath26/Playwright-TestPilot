@@ -286878,6 +286878,7 @@ async function runAgent(options) {
           targetUrl: caseTargetUrl,
           steps: testCaseToInspect.steps,
           mode: options.browseMode ?? "start-page",
+          onStatus: options.onStatus,
           selectSnapshotTarget: providerInfo.liveService ? async (stepAction, actionKind, candidates, signal) => {
             const targetText = parseReplayAction(stepAction)?.target ?? stepAction;
             const candidateShortlist = rankSnapshotElements(candidates, [targetText]).slice(0, 12);
@@ -287047,16 +287048,21 @@ async function gatherEvidenceForTestCase(browser, options) {
         const awaitedStep = options.steps.slice(stepIndex + 1).find((candidate) => isLocatorAction(candidate.action));
         const awaitedAction = awaitedStep ? parseReplayAction(awaitedStep.action) : void 0;
         const targetDescription = awaitedAction?.target ?? manualWaitTarget(step.action);
-        const deadline = Date.now() + 3e4;
+        const deadline = Date.now() + 6e4;
         let matched;
         let polls = 0;
         let openedCollapsedSearch = false;
+        let mfaNoticeSent = false;
         let lastObservedControls = [];
         while (Date.now() < deadline) {
           if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
           const refreshed = await browser.capture(void 0, { signal: options.signal });
           if (refreshed) {
             snapshot = refreshed;
+            if (!mfaNoticeSent && isMfaChallenge(snapshot)) {
+              mfaNoticeSent = true;
+              options.onStatus?.("PingID or another MFA prompt detected. Approve the sign-in on your registered device; TestPilot will wait up to 60 seconds for the next page control.");
+            }
             let ranked = targetDescription ? findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? "click") : [];
             let domTargets = [];
             if (targetDescription && (polls === 0 || polls % 3 === 0)) {
@@ -287581,6 +287587,10 @@ function isLocatorAction(action) {
 }
 function isManualWaitStep(action) {
   return /^\s*(?:\d+[.)]\s*)?wait\s+(?:until\s+|for\s+)?(?:the\s+)?/i.test(action);
+}
+function isMfaChallenge(snapshot) {
+  const observedText = [snapshot.raw, ...snapshot.elements.map((element) => element.name ?? "")].join(" ");
+  return /ping\s*id|ping identity|select\s+(?:the\s+)?number displayed|approve (?:the )?sign[ -]?in|multi[ -]?factor|verification (?:request|prompt|code).*mobile app/i.test(observedText);
 }
 function manualWaitTarget(action) {
   return action.replace(/^\s*(?:\d+[.)]\s*)?wait\s+(?:until\s+|for\s+)?(?:the\s+)?/i, "").replace(/\s+(?:is|becomes?)\s+(?:visible|shown|displayed|ready).*$/i, "").replace(/[.!?]+$/, "").trim() || void 0;
@@ -289256,6 +289266,11 @@ var WorkspaceService = class {
               onStage: (stage, status, summary) => {
                 progress.report({ message: `${stage}: ${summary ?? status}` });
                 this.panel.postStatus(`${stage}: ${summary ?? status}`);
+              },
+              onStatus: (message) => {
+                progress.report({ message });
+                this.panel.postStatus(message);
+                if (/\bMFA\b|PingID/i.test(message)) void vscode.window.showInformationMessage(message);
               }
             });
           } finally {

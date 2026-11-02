@@ -133,6 +133,9 @@ Verified in the current workspace:
   waiting for a Search field that the next step will fill, it may open a uniquely observed Search
   shell-bar button, then waits for the editable field. Timeout messages include the latest visible
   control labels to distinguish a delayed shell from an unexpected screen.
+- VS Code extension build 0.1.63 waits up to 60 seconds for explicit manual wait steps and detects
+  PingID/MFA prompt text in the browser snapshot. It reports the prompt in the sidebar and through
+  a VS Code notification so the user can approve it on their registered device before the wait ends.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of
   `npm run check` and is not called by the extension generation path.
 - The last recorded full check passed 154 tests before the latest model-generation changes;

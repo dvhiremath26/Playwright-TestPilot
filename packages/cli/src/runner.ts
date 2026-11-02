@@ -67,6 +67,8 @@ export interface RunOptions {
   appName?: string
   /** Called as real stages start/finish so UI progress reflects actual work. */
   onStage?: (stage: AgentStage, status: StageRecord['status'], summary?: string) => void
+  /** Status text for browser events that need the user's attention, such as MFA. */
+  onStatus?: (message: string) => void
 }
 
 export interface RunResult {
@@ -306,6 +308,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
           targetUrl: caseTargetUrl,
           steps: testCaseToInspect.steps,
           mode: options.browseMode ?? 'start-page',
+          onStatus: options.onStatus,
           selectSnapshotTarget: providerInfo.liveService
             ? async (stepAction, actionKind, candidates, signal) => {
                 // Keep the LLM's choice grounded in the live snapshot, but send only
@@ -484,6 +487,7 @@ export async function gatherEvidenceForTestCase(
     /** Internal guard so a failed MCP retry cannot recursively restart forever. */
     fallbackRetry?: boolean
     signal?: AbortSignal
+    onStatus?: (message: string) => void
   },
 ): Promise<{ evidence: BrowserEvidence[]; locatorCandidates: VerifiedLocator[] }> {
   const evidence: BrowserEvidence[] = []
@@ -517,16 +521,21 @@ export async function gatherEvidenceForTestCase(
       const awaitedStep = options.steps.slice(stepIndex + 1).find((candidate) => isLocatorAction(candidate.action))
       const awaitedAction = awaitedStep ? parseReplayAction(awaitedStep.action) : undefined
       const targetDescription = awaitedAction?.target ?? manualWaitTarget(step.action)
-      const deadline = Date.now() + 30_000
+      const deadline = Date.now() + 60_000
       let matched: BrowserElementRef | undefined
       let polls = 0
       let openedCollapsedSearch = false
+      let mfaNoticeSent = false
       let lastObservedControls: string[] = []
       while (Date.now() < deadline) {
         if (options.signal?.aborted) throw new Error('Browser step replay was cancelled.')
         const refreshed = await browser.capture(undefined, { signal: options.signal })
         if (refreshed) {
           snapshot = refreshed
+          if (!mfaNoticeSent && isMfaChallenge(snapshot)) {
+            mfaNoticeSent = true
+            options.onStatus?.('PingID or another MFA prompt detected. Approve the sign-in on your registered device; TestPilot will wait up to 60 seconds for the next page control.')
+          }
           let ranked = targetDescription
             ? findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? 'click')
             : []
@@ -1173,6 +1182,11 @@ function isLocatorAction(action: string): boolean {
 
 function isManualWaitStep(action: string): boolean {
   return /^\s*(?:\d+[.)]\s*)?wait\s+(?:until\s+|for\s+)?(?:the\s+)?/i.test(action)
+}
+
+function isMfaChallenge(snapshot: BrowserSnapshot): boolean {
+  const observedText = [snapshot.raw, ...snapshot.elements.map((element) => element.name ?? '')].join(' ')
+  return /ping\s*id|ping identity|select\s+(?:the\s+)?number displayed|approve (?:the )?sign[ -]?in|multi[ -]?factor|verification (?:request|prompt|code).*mobile app/i.test(observedText)
 }
 
 function manualWaitTarget(action: string): string | undefined {

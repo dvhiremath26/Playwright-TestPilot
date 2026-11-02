@@ -177,6 +177,11 @@ class WorkspaceService implements vscode.Disposable {
                 progress.report({ message: `${stage}: ${summary ?? status}` })
                 this.panel.postStatus(`${stage}: ${summary ?? status}`)
               },
+              onStatus: (message) => {
+                progress.report({ message })
+                this.panel.postStatus(message)
+                if (/\bMFA\b|PingID/i.test(message)) void vscode.window.showInformationMessage(message)
+              },
             })
           } finally {
             subscription.dispose()

@@ -517,26 +517,42 @@ export async function gatherEvidenceForTestCase(
       const awaitedStep = options.steps.slice(stepIndex + 1).find((candidate) => isLocatorAction(candidate.action))
       const awaitedAction = awaitedStep ? parseReplayAction(awaitedStep.action) : undefined
       const targetDescription = awaitedAction?.target ?? manualWaitTarget(step.action)
-      const deadline = Date.now() + 20_000
+      const deadline = Date.now() + 30_000
       let matched: BrowserElementRef | undefined
+      let polls = 0
       while (Date.now() < deadline) {
         if (options.signal?.aborted) throw new Error('Browser step replay was cancelled.')
         const refreshed = await browser.capture(undefined, { signal: options.signal })
         if (refreshed) {
           snapshot = refreshed
-          const ranked = targetDescription
+          let ranked = targetDescription
             ? findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? 'click')
             : []
+          // SAP/Fiori controls can be visible in the live DOM while their
+          // accessibility snapshot name is empty or generic. Inspect visible
+          // inputs on a slower cadence and merge only DOM-observed controls.
+          if (targetDescription && (polls === 0 || polls % 3 === 0)) {
+            const domTargets = await inspectVisibleDomTargets(browser, targetDescription, options.signal)
+            if (domTargets.length > 0) {
+              const existingRefs = new Set(snapshot.elements.map((element) => element.ref))
+              const newTargets = domTargets.filter((element) => !existingRefs.has(element.ref))
+              if (newTargets.length > 0) {
+                snapshot = { ...snapshot, elements: [...snapshot.elements, ...newTargets] }
+                ranked = findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? 'click')
+              }
+            }
+          }
           if (ranked[0] && ranked[0].score >= 0.55 &&
               (!ranked[1] || ranked[0].score - ranked[1].score >= 0.05)) {
             matched = ranked[0].element
             break
           }
         }
-        await new Promise((resolve) => setTimeout(resolve, 500))
+        polls++
+        await new Promise((resolve) => setTimeout(resolve, 1000))
       }
       if (!matched) {
-        throw new Error(`Step ${step.order} timed out waiting for ${targetDescription ? `the next step target "${targetDescription}"` : `"${manualWaitTarget(step.action) ?? 'the requested page element'}"`} to appear in fresh browser snapshots. No later screen evidence was collected.`)
+        throw new Error(`Step ${step.order} timed out waiting for ${targetDescription ? `the next step target "${targetDescription}"` : `"${manualWaitTarget(step.action) ?? 'the requested page element'}"`} in fresh accessibility snapshots and visible DOM controls. No later screen evidence was collected.`)
       }
       evidence.push({
         kind: 'snapshot',
@@ -942,7 +958,7 @@ async function inspectVisibleDomTargets(
 ): Promise<BrowserElementRef[]> {
   const inspected = await browser.execute(
     (tool, callOptions) => tool.eval(`() => {
-      const selector = 'a,button,[role="link"],[role="button"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter';
+      const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI';
       const roots = [document];
       for (let index = 0; index < roots.length && index < 40; index++) {
         for (const node of roots[index].querySelectorAll('*')) {
@@ -964,10 +980,11 @@ async function inspectVisibleDomTargets(
         const tag = el.tagName.toLowerCase();
         const explicitRole = el.getAttribute('role');
         const classes = typeof el.className === 'string' ? el.className : '';
-        const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : 'generic');
+        const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : '';
+        const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
         const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
         const control = core && el.id ? core.byId(el.id) : undefined;
-        const ui5Labels = ['getText', 'getTitle', 'getTooltip', 'getAccessibleName', 'getAriaLabel', 'getHeaderText', 'getLabel'].map((method) => {
+        const ui5Labels = ['getText', 'getTitle', 'getTooltip', 'getAccessibleName', 'getAriaLabel', 'getHeaderText', 'getLabel', 'getPlaceholder'].map((method) => {
           try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
         }).filter((value) => typeof value === 'string' && value.trim());
         const labelledBy = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map((id) => {
@@ -975,7 +992,8 @@ async function inspectVisibleDomTargets(
           const label = root.getElementById ? root.getElementById(id) : el.ownerDocument.getElementById(id);
           return label ? (label.innerText || label.textContent || '') : '';
         }).join(' ').trim();
-        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('title') || ui5Labels[0] || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+        const associatedLabels = el.labels ? Array.from(el.labels).map((label) => label.innerText || label.textContent || '').join(' ') : '';
+        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
         const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
         const parentTexts = [el.parentElement, el.parentElement && el.parentElement.parentElement].filter(Boolean).map((parent) => (parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean);
         const context = [...new Set([parentTexts[0], parentTexts[1], control && control.getMetadata && control.getMetadata().getName()].filter(Boolean))].join(' | ').slice(0, 180);

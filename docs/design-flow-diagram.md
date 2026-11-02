@@ -125,6 +125,10 @@ Verified in the current workspace:
   to be visible.” On MCP servers without code execution, it takes a fresh snapshot and polls
   for the next action's observed target instead of failing because load/networkidle cannot be
   queried directly. That fallback records that networkidle was not independently verified.
+- VS Code extension build 0.1.61 also inspects visible input and SAPUI5 search controls during
+  explicit waits, because some SAP shell fields are omitted or generically named in accessibility
+  snapshots. It extends the bounded target wait to 30 seconds and reports whether snapshots or
+  live DOM controls were searched if the target still does not appear.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of
   `npm run check` and is not called by the extension generation path.
 - The last recorded full check passed 154 tests before the latest model-generation changes;

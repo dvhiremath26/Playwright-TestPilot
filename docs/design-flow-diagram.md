@@ -156,6 +156,9 @@ Verified in the current workspace:
 - VS Code extension build 0.1.69 repairs common direct page interactions into the target framework's
   Actions facade when an identical locator already exists in the paired locator class and the action
   is confirmed by the framework index. Unmappable direct Playwright calls remain validation errors.
+- VS Code extension build 0.1.70 recognizes a unique, visible but unnamed SAP searchbox from observed
+  DOM role evidence. If an explicit wait still cannot find its target with the CLI, it replays the
+  case from the start through MCP unless an MFA challenge was detected.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of
   `npm run check` and is not called by the extension generation path.
 - The last recorded full check passed 154 tests before the latest model-generation changes;

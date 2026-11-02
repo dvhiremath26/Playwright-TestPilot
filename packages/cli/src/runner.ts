@@ -537,7 +537,7 @@ export async function gatherEvidenceForTestCase(
             options.onStatus?.('PingID or another MFA prompt detected. Approve the sign-in on your registered device; TestPilot will wait up to 60 seconds for the next page control.')
           }
           let ranked = targetDescription
-            ? findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? 'click')
+            ? findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? 'click', false, isSearchTarget(targetDescription))
             : []
           // SAP/Fiori controls can be visible in the live DOM while their
           // accessibility snapshot name is empty or generic. Inspect visible
@@ -550,13 +550,15 @@ export async function gatherEvidenceForTestCase(
               const newTargets = domTargets.filter((element) => !existingRefs.has(element.ref))
               if (newTargets.length > 0) {
                 snapshot = { ...snapshot, elements: [...snapshot.elements, ...newTargets] }
-                ranked = findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? 'click')
+                ranked = findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? 'click', false, isSearchTarget(targetDescription))
               }
             }
           }
           lastObservedControls = [...snapshot.elements, ...domTargets]
-            .filter((element) => element.name)
-            .map((element) => `${element.role ?? 'element'} "${element.name}"`)
+            .filter((element) => element.name || (isSearchTarget(targetDescription ?? '') && element.role === 'searchbox'))
+            .map((element) => element.name
+              ? `${element.role ?? 'element'} "${element.name}"`
+              : `${element.role ?? 'element'} (unnamed, visible)`)
             .filter((entry, index, all) => all.indexOf(entry) === index)
             .slice(0, 8)
 
@@ -598,12 +600,17 @@ export async function gatherEvidenceForTestCase(
         await new Promise((resolve) => setTimeout(resolve, 1000))
       }
       if (!matched) {
+        if (!mfaNoticeSent && !options.fallbackRetry &&
+            browser.activateFallback(`Playwright CLI exposed no matching control for explicit wait target "${targetDescription ?? ''}"`)) {
+          options.onStatus?.(`Playwright CLI could not expose the awaited ${targetDescription ?? 'page'} control. Restarting the manual flow with Playwright MCP to inspect it.`)
+          return gatherEvidenceForTestCase(browser, { ...options, fallbackRetry: true })
+        }
         const observed = lastObservedControls.length > 0 ? ` Latest visible controls: ${lastObservedControls.join('; ')}.` : ' No named visible controls were exposed.'
         throw new Error(`Step ${step.order} timed out waiting for ${targetDescription ? `the next step target "${targetDescription}"` : `"${manualWaitTarget(step.action) ?? 'the requested page element'}"`} in fresh accessibility snapshots and visible DOM controls.${observed} No later screen evidence was collected.`)
       }
       evidence.push({
         kind: 'snapshot',
-        detail: `Step ${step.order} explicit wait completed: observed ${matched.role ?? 'element'} "${matched.name ?? targetDescription}" in a fresh browser snapshot before continuing.`,
+        detail: `Step ${step.order} explicit wait completed: observed ${matched.role ?? 'element'} "${matched.name || targetDescription}" in a fresh browser snapshot before continuing.`,
         source: browser.provenance ?? navigation.source,
       })
       continue
@@ -661,6 +668,7 @@ export async function gatherEvidenceForTestCase(
         action.target,
         action.kind,
         action.kind === 'click' && Boolean(action.intent),
+        isSearchTarget(action.target),
       )
         .map((candidate) => candidate.element)
       // Some enterprise shells (including SAP/Fiori) expose poorly named links in
@@ -671,6 +679,7 @@ export async function gatherEvidenceForTestCase(
         action.target,
         action.kind,
         action.kind === 'click' && Boolean(action.intent),
+        isSearchTarget(action.target),
       )[0]?.score ?? 0
       if (bestSnapshotScore < 0.35) {
         const domElements = await inspectVisibleDomTargets(
@@ -689,6 +698,7 @@ export async function gatherEvidenceForTestCase(
               action.target,
               action.kind,
               action.kind === 'click' && Boolean(action.intent),
+              isSearchTarget(action.target),
             ).map((candidate) => candidate.element)
             evidence.push({
               kind: 'snapshot',
@@ -714,6 +724,7 @@ export async function gatherEvidenceForTestCase(
             action.target,
             action.kind,
             action.kind === 'click' && Boolean(action.intent),
+            isSearchTarget(action.target),
           ).map((candidate) => candidate.element)
         }
       }
@@ -1023,6 +1034,7 @@ async function inspectVisibleDomTargets(
   const inspected = await browser.execute(
     (tool, callOptions) => tool.eval(`() => {
       const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI';
+      const allowUnnamedSearch = ${isSearchTarget(requestedTarget)};
       const roots = [document];
       for (let index = 0; index < roots.length && index < 40; index++) {
         for (const node of roots[index].querySelectorAll('*')) {
@@ -1062,7 +1074,7 @@ async function inspectVisibleDomTargets(
         const parentTexts = [el.parentElement, el.parentElement && el.parentElement.parentElement].filter(Boolean).map((parent) => (parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean);
         const context = [...new Set([parentTexts[0], parentTexts[1], control && control.getMetadata && control.getMetadata().getName()].filter(Boolean))].join(' | ').slice(0, 180);
         return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), context, navigation: Boolean(nav) };
-      }).filter((item) => item.name && (item.name.length > 1 || item.navigation)).slice(0, 160);
+      }).filter((item) => (item.name && (item.name.length > 1 || item.navigation)) || (allowUnnamedSearch && item.role === 'searchbox')).slice(0, 160);
     }`, undefined, callOptions),
     { signal },
   )
@@ -1073,12 +1085,12 @@ async function inspectVisibleDomTargets(
   const matching = rows
     .map((row) => ({
       ...row,
-      score: Math.max(
+      score: isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.name ? 0.9 : Math.max(
         textMatchScore(normalizeWords(row.name), wanted),
         textMatchScore(normalizeWords(row.context ?? ''), wanted) * 0.85,
       ),
     }))
-    .filter((row) => row.score >= 0.35 || (includeSidebarCandidates && row.navigation && row.id && row.uniqueId))
+    .filter((row) => row.score >= 0.35 || (includeSidebarCandidates && row.navigation && row.id && row.uniqueId) || (isSearchTarget(requestedTarget) && row.role === 'searchbox'))
     .sort((a, b) => b.score - a.score || Number(b.navigation) - Number(a.navigation))
     .slice(0, includeSidebarCandidates ? 24 : 20)
 
@@ -1087,21 +1099,29 @@ async function inspectVisibleDomTargets(
     const key = `${row.role ?? ''}\u0000${row.name}`
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
+  const searchboxCount = matching.filter((row) => row.role === 'searchbox').length
 
   return matching.flatMap((row) => {
     const duplicateName = (counts.get(`${row.role ?? ''}\u0000${row.name}`) ?? 0) !== 1
     // Use the observed element id to distinguish repeated Fiori controls. Without
     // a unique id, identical role/name matches remain ambiguous and are excluded.
     if (duplicateName && !row.uniqueId) return []
-    const useObservedId = duplicateName || (includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35)
+    const unnamedUniqueSearchbox = isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.name && searchboxCount === 1
+    const useObservedId = duplicateName ||
+      (isSearchTarget(requestedTarget) && row.role === 'searchbox' && searchboxCount > 1 && row.id && row.uniqueId) ||
+      (includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35)
     const css = row.id ? `[id=${JSON.stringify(row.id)}]` : undefined
     const expression = useObservedId && css
       ? `locator(${JSON.stringify(css)})`
+      : unnamedUniqueSearchbox
+      ? `getByRole("searchbox")`
       : row.role && row.role !== 'generic'
       ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })`
       : `getByText(${JSON.stringify(row.name)}, { exact: true })`
     const selector = useObservedId && css
       ? `css=${css}`
+      : unnamedUniqueSearchbox
+      ? 'role=searchbox'
       : row.role && row.role !== 'generic'
       ? `role=${row.role}[name=${JSON.stringify(row.name)}]`
       : `text=${JSON.stringify(row.name)}`
@@ -1119,10 +1139,12 @@ function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: str
     return value.flatMap((item) => {
       if (!item || typeof item !== 'object') return []
       const row = item as { role?: unknown; name?: unknown; id?: unknown; uniqueId?: unknown; context?: unknown; navigation?: unknown }
-      if (typeof row.name !== 'string' || !row.name.trim()) return []
+      const role = typeof row.role === 'string' ? row.role : undefined
+      const name = typeof row.name === 'string' ? row.name.trim() : ''
+      if (!name && role !== 'searchbox') return []
       return [{
-        role: typeof row.role === 'string' ? row.role : undefined,
-        name: row.name.trim(),
+        role,
+        name,
         id: typeof row.id === 'string' ? row.id : undefined,
         uniqueId: row.uniqueId === true,
         context: typeof row.context === 'string' ? row.context : undefined,
@@ -1297,8 +1319,9 @@ function findActionTarget(
   snapshot: NonNullable<Awaited<ReturnType<BrowserSession['capture']>>>,
   target: string,
   kind: ReplayAction['kind'],
+  allowUnnamedSearch = false,
 ) {
-  const ranked = findActionTargets(snapshot, target, kind)
+  const ranked = findActionTargets(snapshot, target, kind, false, allowUnnamedSearch)
   if (!ranked[0] || ranked[0].score < 0.75) return undefined
   if (ranked[1] && ranked[0].score - ranked[1].score < 0.05) return undefined
   return ranked[0].element
@@ -1309,12 +1332,14 @@ function findActionTargets(
   target: string,
   kind: ReplayAction['kind'],
   includeTreeItems = false,
+  allowUnnamedSearch = false,
 ) {
   const wanted = normalizeWords(target)
   if (!wanted) return []
   const wantedTokens = new Set(wanted.split(' '))
   const ranked = snapshot.elements
-    .filter((element) => element.actionable !== false && (element.name || includeTreeItems))
+    .filter((element) => element.actionable !== false &&
+      (element.name || includeTreeItems || (allowUnnamedSearch && isSearchTarget(target) && element.role === 'searchbox')))
     .filter((element) => kind !== 'fill' || /^(?:textbox|searchbox|combobox|spinbutton)$/i.test(element.role ?? ''))
     .filter((element) => !['check', 'uncheck'].includes(kind) || /^(?:checkbox|radio)$/i.test(element.role ?? ''))
     .filter((element) => kind !== 'click' || /^(?:button|link|menuitem|tab|checkbox|radio|option|switch|treeitem|listitem|text|generic)$/i.test(element.role ?? ''))
@@ -1322,7 +1347,8 @@ function findActionTargets(
       const name = normalizeWords(element.name ?? '')
       const tokens = name.split(' ').filter(Boolean)
       const overlap = tokens.filter((token) => wantedTokens.has(token)).length
-      const score = name === wanted ? 1 : name.includes(wanted) || wanted.includes(name)
+      const score = allowUnnamedSearch && isSearchTarget(target) && element.role === 'searchbox' && !name ? 0.9
+        : name === wanted ? 1 : name.includes(wanted) || wanted.includes(name)
         ? 0.9
         : overlap / Math.max(wantedTokens.size, tokens.length, 1)
       return { element, score }
@@ -1372,6 +1398,10 @@ function normalizeWords(value: string): string {
     .replace(/\blisting\b/g, 'list')
     .trim()
     .replace(/\s+/g, ' ')
+}
+
+function isSearchTarget(value: string): boolean {
+  return /\bsearch\b/i.test(value)
 }
 
 function isSidebarNavigationStep(action: string): boolean {

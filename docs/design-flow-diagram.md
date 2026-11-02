@@ -153,6 +153,9 @@ Verified in the current workspace:
 - VS Code extension build 0.1.68 compares locator expressions after normalizing harmless formatting
   differences (quotes, whitespace, and trailing commas) while preserving locator role and name.
   Generation errors now distinguish a completed browser replay from rejected generated code.
+- VS Code extension build 0.1.69 repairs common direct page interactions into the target framework's
+  Actions facade when an identical locator already exists in the paired locator class and the action
+  is confirmed by the framework index. Unmappable direct Playwright calls remain validation errors.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of
   `npm run check` and is not called by the extension generation path.
 - The last recorded full check passed 154 tests before the latest model-generation changes;

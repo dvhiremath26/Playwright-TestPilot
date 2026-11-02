@@ -287981,7 +287981,10 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
   ];
   let response = await provider.chat(messages, { purpose: "generate", modelId, signal: options.signal });
   recordGenerationCall(response.modelId);
-  let changes = parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath });
+  let changes = rewriteDirectPageActions(
+    parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath }),
+    facts.actionMethods
+  );
   const maxCorrections = 2;
   const needsCorrection = (candidate) => !hasSpec(candidate) || standardIssues(candidate).length > 0 || !!manualTestData && manualDataUsageIssues(candidate, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow).length > 0;
   for (let correction = 0; correction < maxCorrections && needsCorrection(changes); correction++) {
@@ -288003,6 +288006,7 @@ ${issues.map((issue) => `- ${issue}`).join("\n")}`] : [],
       ...dataIssues.length > 0 ? [`It failed to use the extracted test data:
 ${dataIssues.map((issue) => `- ${issue}`).join("\n")}`] : [],
       "Return the complete file set again. Implement every manual step in order; the generated code does not need to repeat the manual wording verbatim. Correct every listed standards violation and copy the architecture from the real source examples where needed. For new page behavior, create page-object/locator code using matching browser observations; never invent a selector that is absent from evidence. Every new locator expression must exactly match an expression in the Playwright CLI observations or an indexed framework locator. For data-driven text assertions, a locator-class method may accept the expected value and use getByText(expectedValue) only when a literal getByText candidate for that assertion is present in the matching snapshot evidence; pass the value from the data row. If evidence is insufficient, do not invent a locator or leave a guessed CSS selector with an adjustment comment; keep the specific step unresolved and explain which live snapshot is missing.",
+      "Page methods must never call this.page.getByRole(...), this.page.locator(...), or this.page.goto(...). Put the observed locator in the paired locator class, then call the confirmed framework wrapper: await this.actions.fill(this.locators.FIELD, value), await this.actions.click(this.locators.FIELD), and await this.actions.browser.navigate(url). Match the target framework examples and do not use raw Playwright interactions inside a page object.",
       "Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.",
       renderScreenArchitectureRequirements(manualCases, targetPagePath, targetLocatorPath),
       "Output only fenced TypeScript file blocks with repository-relative paths, including a tests/*.spec.ts file."
@@ -288013,7 +288017,10 @@ ${dataIssues.map((issue) => `- ${issue}`).join("\n")}`] : [],
       { role: "user", content: correctionPrompt }
     ], { purpose: "generate", modelId, signal: options.signal });
     recordGenerationCall(response.modelId);
-    changes = parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath });
+    changes = rewriteDirectPageActions(
+      parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath }),
+      facts.actionMethods
+    );
   }
   if (!hasSpec(changes)) {
     const parsed = changes.length > 0 ? `Parsed file blocks: ${changes.map((change) => change.path).join(", ")}; none contained a tests/*.spec.ts file with a test(...) declaration.` : "No repository-relative TypeScript file blocks could be parsed from the model reply.";
@@ -288648,6 +288655,48 @@ function normalizeLocatorExpression(expression) {
     normalized += char;
   }
   return normalized;
+}
+function rewriteDirectPageActions(changes, actionMethods) {
+  const knownMethods = new Set(actionMethods.flatMap((method) => [
+    method.name,
+    method.facadeNamespace ? `${method.facadeNamespace}.${method.name}` : ""
+  ]).filter(Boolean));
+  const hasAction = (name) => knownMethods.has(name) || knownMethods.has(`Actions.${name}`);
+  return changes.map((page) => {
+    if (!/^pages\/.+\.page\.tsx?$/i.test(page.path) || !page.newContent) return page;
+    const locatorPath = page.path.replace(/\.page\.tsx?$/i, ".locators.ts");
+    const locatorFile = changes.find((change) => change.path === locatorPath);
+    const locatorSource = locatorFile?.newContent ?? "";
+    if (!locatorSource) return page;
+    const locatorFields = [...locatorSource.matchAll(
+      /^\s*readonly\s+([A-Za-z_$][\w$]*)\s*=\s*this\.page\.(getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\(([^\r\n]*)\)\s*;?\s*$/gm
+    )].map((match) => ({
+      name: match[1],
+      expression: `this.page.${match[2]}(${match[3]})`
+    }));
+    if (locatorFields.length === 0) return page;
+    let source = page.newContent;
+    const directCall = /this\.page\.(getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\(([^\r\n]*)\)\.(click|fill|check|uncheck|hover|isVisible)\(([^\r\n]*)\)/g;
+    source = source.replace(directCall, (full, locatorMethod, locatorArgs, action, actionArgs) => {
+      const expression = `this.page.${locatorMethod}(${locatorArgs})`;
+      const field = locatorFields.find(
+        (candidate) => normalizeLocatorExpression(candidate.expression) === normalizeLocatorExpression(expression)
+      );
+      if (!field) return full;
+      const args = actionArgs.trim();
+      const simpleSignature = action === "fill" ? args.length > 0 && !args.includes(",") : args.length === 0;
+      if (!simpleSignature || !hasAction(action)) return full;
+      return `this.actions.${action}(this.locators.${field.name}${args ? `, ${args}` : ""})`;
+    });
+    if (hasAction("navigate") || hasAction("browser.navigate")) {
+      source = source.replace(/this\.page\.goto\(([^\r\n]*)\)/g, (_full, args) => {
+        const url = args.split(",")[0]?.trim();
+        if (!url) return _full;
+        return `this.actions.browser.navigate(${url})`;
+      });
+    }
+    return source === page.newContent ? page : { ...page, newContent: source };
+  });
 }
 async function generateRepairChanges(options) {
   const attempts = options.task.repairAttempts ?? 0;

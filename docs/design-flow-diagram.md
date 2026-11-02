@@ -129,6 +129,10 @@ Verified in the current workspace:
   explicit waits, because some SAP shell fields are omitted or generically named in accessibility
   snapshots. It extends the bounded target wait to 30 seconds and reports whether snapshots or
   live DOM controls were searched if the target still does not appear.
+- VS Code extension build 0.1.62 handles the SAP Fiori shell's collapsed global search: while
+  waiting for a Search field that the next step will fill, it may open a uniquely observed Search
+  shell-bar button, then waits for the editable field. Timeout messages include the latest visible
+  control labels to distinguish a delayed shell from an unexpected screen.
 - `npm run check:conformance` runs the standalone conformance checker; it is not part of
   `npm run check` and is not called by the extension generation path.
 - The last recorded full check passed 154 tests before the latest model-generation changes;

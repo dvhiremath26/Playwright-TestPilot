@@ -287050,14 +287050,17 @@ async function gatherEvidenceForTestCase(browser, options) {
         const deadline = Date.now() + 3e4;
         let matched;
         let polls = 0;
+        let openedCollapsedSearch = false;
+        let lastObservedControls = [];
         while (Date.now() < deadline) {
           if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
           const refreshed = await browser.capture(void 0, { signal: options.signal });
           if (refreshed) {
             snapshot = refreshed;
             let ranked = targetDescription ? findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? "click") : [];
+            let domTargets = [];
             if (targetDescription && (polls === 0 || polls % 3 === 0)) {
-              const domTargets = await inspectVisibleDomTargets(browser, targetDescription, options.signal);
+              domTargets = await inspectVisibleDomTargets(browser, targetDescription, options.signal);
               if (domTargets.length > 0) {
                 const existingRefs = new Set(snapshot.elements.map((element) => element.ref));
                 const newTargets = domTargets.filter((element) => !existingRefs.has(element.ref));
@@ -287065,6 +287068,27 @@ async function gatherEvidenceForTestCase(browser, options) {
                   snapshot = { ...snapshot, elements: [...snapshot.elements, ...newTargets] };
                   ranked = findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? "click");
                 }
+              }
+            }
+            lastObservedControls = [...snapshot.elements, ...domTargets].filter((element) => element.name).map((element) => `${element.role ?? "element"} "${element.name}"`).filter((entry, index, all) => all.indexOf(entry) === index).slice(0, 8);
+            if (!matched && !openedCollapsedSearch && awaitedAction?.kind === "fill" && /\bsearch\b/i.test(targetDescription ?? "")) {
+              const searchButtons = findActionTargets(snapshot, "Search", "click").filter(
+                ({ element, score }) => /^(?:button|search|generic)$/i.test(element.role ?? "") && /^search(?:\s+(?:apps|applications|all))?$/i.test((element.name ?? "").trim()) && score >= 0.9
+              );
+              if (searchButtons.length === 1) {
+                openedCollapsedSearch = true;
+                const opened = await browser.execute(
+                  (tool, callOptions) => tool.click(searchButtons[0].element.ref, callOptions),
+                  { signal: options.signal }
+                );
+                if (!opened.ok) {
+                  throw new Error(`Step ${step.order} found the SAP Search button but could not open its search field: ${opened.error ?? "click failed"}.`);
+                }
+                evidence.push({
+                  kind: "interaction",
+                  detail: `Step ${step.order}: opened the uniquely observed Search shell-bar button to reveal the Search field required by the next manual step.`,
+                  source: opened.provenance ?? browser.provenance ?? navigation.source
+                });
               }
             }
             if (ranked[0] && ranked[0].score >= 0.55 && (!ranked[1] || ranked[0].score - ranked[1].score >= 0.05)) {
@@ -287076,7 +287100,8 @@ async function gatherEvidenceForTestCase(browser, options) {
           await new Promise((resolve5) => setTimeout(resolve5, 1e3));
         }
         if (!matched) {
-          throw new Error(`Step ${step.order} timed out waiting for ${targetDescription ? `the next step target "${targetDescription}"` : `"${manualWaitTarget(step.action) ?? "the requested page element"}"`} in fresh accessibility snapshots and visible DOM controls. No later screen evidence was collected.`);
+          const observed = lastObservedControls.length > 0 ? ` Latest visible controls: ${lastObservedControls.join("; ")}.` : " No named visible controls were exposed.";
+          throw new Error(`Step ${step.order} timed out waiting for ${targetDescription ? `the next step target "${targetDescription}"` : `"${manualWaitTarget(step.action) ?? "the requested page element"}"`} in fresh accessibility snapshots and visible DOM controls.${observed} No later screen evidence was collected.`);
         }
         evidence.push({
           kind: "snapshot",

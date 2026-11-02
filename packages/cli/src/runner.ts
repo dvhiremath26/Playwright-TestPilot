@@ -520,6 +520,8 @@ export async function gatherEvidenceForTestCase(
       const deadline = Date.now() + 30_000
       let matched: BrowserElementRef | undefined
       let polls = 0
+      let openedCollapsedSearch = false
+      let lastObservedControls: string[] = []
       while (Date.now() < deadline) {
         if (options.signal?.aborted) throw new Error('Browser step replay was cancelled.')
         const refreshed = await browser.capture(undefined, { signal: options.signal })
@@ -531,8 +533,9 @@ export async function gatherEvidenceForTestCase(
           // SAP/Fiori controls can be visible in the live DOM while their
           // accessibility snapshot name is empty or generic. Inspect visible
           // inputs on a slower cadence and merge only DOM-observed controls.
+          let domTargets: BrowserElementRef[] = []
           if (targetDescription && (polls === 0 || polls % 3 === 0)) {
-            const domTargets = await inspectVisibleDomTargets(browser, targetDescription, options.signal)
+            domTargets = await inspectVisibleDomTargets(browser, targetDescription, options.signal)
             if (domTargets.length > 0) {
               const existingRefs = new Set(snapshot.elements.map((element) => element.ref))
               const newTargets = domTargets.filter((element) => !existingRefs.has(element.ref))
@@ -540,6 +543,40 @@ export async function gatherEvidenceForTestCase(
                 snapshot = { ...snapshot, elements: [...snapshot.elements, ...newTargets] }
                 ranked = findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? 'click')
               }
+            }
+          }
+          lastObservedControls = [...snapshot.elements, ...domTargets]
+            .filter((element) => element.name)
+            .map((element) => `${element.role ?? 'element'} "${element.name}"`)
+            .filter((entry, index, all) => all.indexOf(entry) === index)
+            .slice(0, 8)
+
+          // In SAP Fiori the global search can start collapsed behind a Search
+          // shell-bar button. If the manual case says to wait for the search
+          // field and the next step fills it, open only a uniquely observed
+          // Search button, then keep waiting for the actual editable field.
+          if (!matched && !openedCollapsedSearch && awaitedAction?.kind === 'fill' &&
+              /\bsearch\b/i.test(targetDescription ?? '')) {
+            const searchButtons = findActionTargets(snapshot, 'Search', 'click')
+              .filter(({ element, score }) =>
+                /^(?:button|search|generic)$/i.test(element.role ?? '') &&
+                /^search(?:\s+(?:apps|applications|all))?$/i.test((element.name ?? '').trim()) &&
+                score >= 0.9,
+              )
+            if (searchButtons.length === 1) {
+              openedCollapsedSearch = true
+              const opened = await browser.execute(
+                (tool, callOptions) => tool.click(searchButtons[0]!.element.ref, callOptions),
+                { signal: options.signal },
+              )
+              if (!opened.ok) {
+                throw new Error(`Step ${step.order} found the SAP Search button but could not open its search field: ${opened.error ?? 'click failed'}.`)
+              }
+              evidence.push({
+                kind: 'interaction',
+                detail: `Step ${step.order}: opened the uniquely observed Search shell-bar button to reveal the Search field required by the next manual step.`,
+                source: opened.provenance ?? browser.provenance ?? navigation.source,
+              })
             }
           }
           if (ranked[0] && ranked[0].score >= 0.55 &&
@@ -552,7 +589,8 @@ export async function gatherEvidenceForTestCase(
         await new Promise((resolve) => setTimeout(resolve, 1000))
       }
       if (!matched) {
-        throw new Error(`Step ${step.order} timed out waiting for ${targetDescription ? `the next step target "${targetDescription}"` : `"${manualWaitTarget(step.action) ?? 'the requested page element'}"`} in fresh accessibility snapshots and visible DOM controls. No later screen evidence was collected.`)
+        const observed = lastObservedControls.length > 0 ? ` Latest visible controls: ${lastObservedControls.join('; ')}.` : ' No named visible controls were exposed.'
+        throw new Error(`Step ${step.order} timed out waiting for ${targetDescription ? `the next step target "${targetDescription}"` : `"${manualWaitTarget(step.action) ?? 'the requested page element'}"`} in fresh accessibility snapshots and visible DOM controls.${observed} No later screen evidence was collected.`)
       }
       evidence.push({
         kind: 'snapshot',

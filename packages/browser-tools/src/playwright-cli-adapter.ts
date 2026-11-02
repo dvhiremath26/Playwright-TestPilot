@@ -291,8 +291,9 @@ export class PlaywrightCliAdapter implements BrowserTool {
     const normalizedTarget = target.replace(/locator\(([^()]*)\)\.contentFrame\(\)/g, 'frameLocator($1)')
     if (!/^(?:(?:this\.)?page\.)?frameLocator\(/.test(normalizedTarget)) return undefined
     const locator = normalizedTarget.replace(/^(?:this\.)?page\./, 'page.')
+    const pageScopedLocator = locator.startsWith('page.') ? locator : `page.${locator}`
     const args = value === undefined ? '' : JSON.stringify(value)
-    const code = `async page => { const locator = ${locator}; await locator.${action}(${args}); return 'Frame-scoped ${action} completed'; }`
+    const code = `async page => { const locator = ${pageScopedLocator}; await locator.${action}(${args}); return 'Frame-scoped ${action} completed'; }`
     return this.run(['run-code', code], options)
   }
 

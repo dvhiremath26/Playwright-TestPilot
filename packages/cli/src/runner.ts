@@ -3234,7 +3234,11 @@ export function rewriteObservedFrameLocators(changes: FileChange[], candidates: 
       /^(\s*readonly\s+[A-Za-z_$][\w$]*\s*=\s*)([^;\r\n]+)(;?\s*)$/gm,
       (line, prefix: string, current: string, suffix: string) => {
         const currentExpression = extractLocatorExpressions(current)[0]
-        if (!currentExpression || normalizeLocatorExpression(currentExpression).includes('frameLocator(')) return line
+        if (!currentExpression) return line
+        const normalizedCurrent = normalizeLocatorExpression(currentExpression)
+        if (normalizedCurrent.includes('frameLocator(') && observedFrameLocators.some((candidate) =>
+          normalizeLocatorExpression(candidate.expression) === normalizedCurrent,
+        )) return line
         const details = locatorCallDetails(currentExpression)
         if (!details || details.method === 'frameLocator') return line
         const leaf = normalizeLocatorExpression(`${details.method}(${details.args})`)

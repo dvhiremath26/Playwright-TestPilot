@@ -286017,8 +286017,9 @@ var PlaywrightCliAdapter = class {
     return this.run(["uncheck", target], options);
   }
   runFrameLocatorAction(target, action, value, options) {
-    if (!/^(?:(?:this\.)?page\.)?frameLocator\(/.test(target)) return void 0;
-    const locator = target.replace(/^(?:this\.)?page\./, "page.");
+    const normalizedTarget = target.replace(/locator\(([^()]*)\)\.contentFrame\(\)/g, "frameLocator($1)");
+    if (!/^(?:(?:this\.)?page\.)?frameLocator\(/.test(normalizedTarget)) return void 0;
+    const locator = normalizedTarget.replace(/^(?:this\.)?page\./, "page.");
     const args = value === void 0 ? "" : JSON.stringify(value);
     const code = `async page => { const locator = ${locator}; await locator.${action}(${args}); return 'Frame-scoped ${action} completed'; }`;
     return this.run(["run-code", code], options);
@@ -287106,6 +287107,11 @@ async function gatherEvidenceForTestCase(browser, options) {
             let domTargets = [];
             if (targetDescription && (polls === 0 || polls % 3 === 0)) {
               domTargets = await inspectVisibleDomTargets(browser, targetDescription, options.signal);
+              const afterInspection = await browser.capture(void 0, { signal: options.signal });
+              if (afterInspection) {
+                snapshot = afterInspection;
+                ranked = findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? "click", false, isSearchTarget(targetDescription));
+              }
               if (domTargets.length > 0) {
                 const existingRefs = new Set(snapshot.elements.map((element) => element.ref));
                 const newTargets = domTargets.filter((element) => !existingRefs.has(element.ref));
@@ -287157,6 +287163,7 @@ async function gatherEvidenceForTestCase(browser, options) {
           detail: `Step ${step.order} explicit wait completed: observed ${matched.role ?? "element"} "${matched.name || targetDescription}" in a fresh browser snapshot before continuing.`,
           source: browser.provenance ?? navigation.source
         });
+        snapshot = await captureScreen(`After wait step ${step.order}`, currentUrl);
         continue;
       }
       const explicitUrl = extractStepUrl(step.action);
@@ -287223,6 +287230,8 @@ async function gatherEvidenceForTestCase(browser, options) {
             isSidebarNavigationStep(step.action)
           );
           if (domElements.length > 0) {
+            const afterInspection = await browser.capture(void 0, { signal: options.signal });
+            if (afterInspection) snapshot = afterInspection;
             const existingRefs = new Set(snapshot.elements.map((element) => element.ref));
             const newElements = domElements.filter((element) => !existingRefs.has(element.ref));
             if (newElements.length > 0) {
@@ -287296,13 +287305,13 @@ async function gatherEvidenceForTestCase(browser, options) {
           async (tool, callOptions) => {
             switch (action.kind) {
               case "fill":
-                return tool.fill(target.ref, action.value, callOptions);
+                return tool.fill(target.locatorExpression ?? target.ref, action.value, callOptions);
               case "check":
-                return tool.check ? tool.check(target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox check operations.` };
+                return tool.check ? tool.check(target.locatorExpression ?? target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox check operations.` };
               case "uncheck":
-                return tool.uncheck ? tool.uncheck(target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox uncheck operations.` };
+                return tool.uncheck ? tool.uncheck(target.locatorExpression ?? target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox uncheck operations.` };
               default:
-                return tool.click(target.ref, callOptions);
+                return tool.click(target.locatorExpression ?? target.ref, callOptions);
             }
           },
           { signal: options.signal }
@@ -287423,7 +287432,7 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
       if (options.signal?.aborted) throw new Error("Sidebar candidate retry was cancelled.");
       attempts++;
       const result = await browser.execute(
-        (tool, callOptions) => tool.click(candidate.ref, callOptions),
+        (tool, callOptions) => tool.click(candidate.locatorExpression ?? candidate.ref, callOptions),
         { signal: options.signal }
       );
       const completedDespiteTimeout = !result.ok && isClickNavigationWaitTimeout(result.error);
@@ -287490,6 +287499,7 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
       const generated = await browser.generateLocator(element.ref, { signal: options.signal });
       const expression = generated.output?.trim();
       if (!generated.ok || !expression || !/^(?:(?:this\.)?page\.)?(?:frameLocator|getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\(/.test(expression)) continue;
+      element.locatorExpression = expression;
       candidates.push({
         ref: element.ref,
         role: element.role,

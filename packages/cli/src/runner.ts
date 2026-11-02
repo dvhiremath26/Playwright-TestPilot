@@ -545,6 +545,13 @@ export async function gatherEvidenceForTestCase(
           let domTargets: BrowserElementRef[] = []
           if (targetDescription && (polls === 0 || polls % 3 === 0)) {
             domTargets = await inspectVisibleDomTargets(browser, targetDescription, options.signal)
+            // run-code/eval may refresh the CLI's ephemeral aria refs. Re-snapshot
+            // before selecting or acting on a ref from the current screen.
+            const afterInspection = await browser.capture(undefined, { signal: options.signal })
+            if (afterInspection) {
+              snapshot = afterInspection
+              ranked = findActionTargets(snapshot, targetDescription, awaitedAction?.kind ?? 'click', false, isSearchTarget(targetDescription))
+            }
             if (domTargets.length > 0) {
               const existingRefs = new Set(snapshot.elements.map((element) => element.ref))
               const newTargets = domTargets.filter((element) => !existingRefs.has(element.ref))
@@ -613,6 +620,7 @@ export async function gatherEvidenceForTestCase(
         detail: `Step ${step.order} explicit wait completed: observed ${matched.role ?? 'element'} "${matched.name || targetDescription}" in a fresh browser snapshot before continuing.`,
         source: browser.provenance ?? navigation.source,
       })
+      snapshot = await captureScreen(`After wait step ${step.order}`, currentUrl)
       continue
     }
 
@@ -689,6 +697,8 @@ export async function gatherEvidenceForTestCase(
           isSidebarNavigationStep(step.action),
         )
         if (domElements.length > 0) {
+          const afterInspection = await browser.capture(undefined, { signal: options.signal })
+          if (afterInspection) snapshot = afterInspection
           const existingRefs = new Set(snapshot.elements.map((element) => element.ref))
           const newElements = domElements.filter((element) => !existingRefs.has(element.ref))
           if (newElements.length > 0) {
@@ -769,14 +779,14 @@ export async function gatherEvidenceForTestCase(
       const result = sidebarTrialForStep?.result ?? await browser.execute(
         async (tool, callOptions) => {
           switch (action.kind) {
-            case 'fill': return tool.fill(target.ref, action.value!, callOptions)
+            case 'fill': return tool.fill(target.locatorExpression ?? target.ref, action.value!, callOptions)
             case 'check': return tool.check
-              ? tool.check(target.ref, callOptions)
+              ? tool.check(target.locatorExpression ?? target.ref, callOptions)
               : { ok: false, error: `${tool.info.label} does not support safe checkbox check operations.` }
             case 'uncheck': return tool.uncheck
-              ? tool.uncheck(target.ref, callOptions)
+              ? tool.uncheck(target.locatorExpression ?? target.ref, callOptions)
               : { ok: false, error: `${tool.info.label} does not support safe checkbox uncheck operations.` }
-            default: return tool.click(target.ref, callOptions)
+            default: return tool.click(target.locatorExpression ?? target.ref, callOptions)
           }
         },
         { signal: options.signal },
@@ -930,7 +940,7 @@ export async function gatherEvidenceForTestCase(
       if (options.signal?.aborted) throw new Error('Sidebar candidate retry was cancelled.')
       attempts++
       const result = await browser.execute(
-        (tool, callOptions) => tool.click(candidate.ref, callOptions),
+        (tool, callOptions) => tool.click(candidate.locatorExpression ?? candidate.ref, callOptions),
         { signal: options.signal },
       )
       const completedDespiteTimeout = !result.ok && isClickNavigationWaitTimeout(result.error)
@@ -1005,6 +1015,7 @@ export async function gatherEvidenceForTestCase(
       const generated = await browser.generateLocator(element.ref, { signal: options.signal })
       const expression = generated.output?.trim()
       if (!generated.ok || !expression || !/^(?:(?:this\.)?page\.)?(?:frameLocator|getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\(/.test(expression)) continue
+      element.locatorExpression = expression
       candidates.push({
         ref: element.ref,
         role: element.role,

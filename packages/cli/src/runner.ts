@@ -641,14 +641,18 @@ export async function gatherEvidenceForTestCase(
         },
         { signal: options.signal },
       )
-      if (!result.ok) {
+      const clickTriggeredNavigationWaitTimeout = action.kind === 'click' &&
+        !result.ok && isClickNavigationWaitTimeout(result.error)
+      if (!result.ok && !clickTriggeredNavigationWaitTimeout) {
         throw new Error(`Step ${step.order} could not be replayed safely: ${result.error ?? 'browser action failed'}. No later screen evidence was collected.`)
       }
       await waitForPageReady(`Step ${step.order} action`)
       evidence.push({
         kind: 'interaction',
-        detail: `Step ${step.order} replayed: ${step.action}`,
-        source: result.provenance,
+        detail: clickTriggeredNavigationWaitTimeout
+          ? `Step ${step.order} click completed, but the CLI timed out waiting for the scheduled navigation; the flow continued without repeating the click: ${step.action}`
+          : `Step ${step.order} replayed: ${step.action}`,
+        source: result.provenance ?? browser.provenance ?? navigation.source,
       })
       const location = await browser.execute(
         (tool, callOptions) => tool.eval('() => window.location.href', undefined, callOptions),
@@ -839,6 +843,18 @@ function textMatchScore(candidate: string, wanted: string): number {
   const wantedTokens = new Set(wanted.split(' ').filter(Boolean))
   const overlap = candidate.split(' ').filter((token) => wantedTokens.has(token)).length
   return overlap / Math.max(wantedTokens.size, candidate.split(' ').length, 1)
+}
+
+/**
+ * The CLI can report a timeout after the click already happened, while it waits
+ * for a slow SSO/navigation response. Treat that as a completed click and inspect
+ * the resulting page; never click the submit control a second time.
+ */
+function isClickNavigationWaitTimeout(error: string | undefined): boolean {
+  return Boolean(error &&
+    /click action done/i.test(error) &&
+    /waiting for scheduled navigations/i.test(error) &&
+    /timeout/i.test(error))
 }
 
 type ReplayAction =

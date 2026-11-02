@@ -113,9 +113,10 @@ Verified in the current workspace:
 - Saved task continuation through `resume`, with repository drift checks before generation
   and apply.
 - CLI plan, deterministic proposal generation, apply, and validation commands.
-- VS Code extension build 0.1.57 adds a bounded DOM-stability fallback when SAP/Fiori
+- VS Code extension build 0.1.58 adds a bounded DOM-stability fallback when SAP/Fiori
   long-polling prevents network-idle, alongside DOM-grounded locator discovery and missing-step
-  rejection; packaged
+  rejection. A click that completed before its navigation-wait timeout is not repeated; TestPilot
+  inspects the resulting page instead.
   builds also include step-by-step inspection,
   isolated CLI/MCP sessions, and bounded page-readiness waits. A live extension-host run
   against the user's SAP application remains unverified.

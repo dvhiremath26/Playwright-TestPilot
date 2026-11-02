@@ -1878,10 +1878,10 @@ export async function generateChangesFromProvider(
 
   let response = await provider.chat(messages, { purpose: 'generate', modelId, signal: options.signal })
   recordGenerationCall(response.modelId)
-  let changes = rewriteDirectPageActions(
+  let changes = rewriteObservedFrameLocators(rewriteDirectPageActions(
     parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath }),
     facts.actionMethods,
-  )
+  ), options.task.browserLocatorCandidates ?? [])
   const maxCorrections = 2
   const needsCorrection = (candidate: FileChange[]): boolean =>
     !hasSpec(candidate) || standardIssues(candidate).length > 0 ||
@@ -1917,10 +1917,10 @@ export async function generateChangesFromProvider(
       { role: 'user', content: correctionPrompt },
     ], { purpose: 'generate', modelId, signal: options.signal })
     recordGenerationCall(response.modelId)
-    changes = rewriteDirectPageActions(
+    changes = rewriteObservedFrameLocators(rewriteDirectPageActions(
       parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath }),
       facts.actionMethods,
-    )
+    ), options.task.browserLocatorCandidates ?? [])
   }
 
   if (!hasSpec(changes)) {
@@ -2755,7 +2755,10 @@ function findFrameworkStandardIssues(
     }))
     for (const match of locatorCalls) {
       const expression = match.expression.replace(/^this\.page\./, '')
-      if (!allowed.has(normalizeLocatorExpression(expression))) {
+      const normalizedExpression = normalizeLocatorExpression(expression)
+      const locatorIsObserved = allowed.has(normalizedExpression) ||
+        [...allowed].some((observed) => observed.startsWith(`${normalizedExpression}.`))
+      if (!locatorIsObserved) {
         const callIndex = match.index
         const method = stringParameterMethods.find((candidate) =>
           callIndex >= candidate.bodyStart && callIndex < candidate.bodyStart + candidate.body.length,
@@ -2779,7 +2782,10 @@ function findFrameworkStandardIssues(
 }
 
 function normalizeLocatorExpression(expression: string): string {
-  const source = expression.trim().replace(/;\s*$/, '').replace(/^(?:(?:this\.)?page\.)/, '')
+  const source = expression.trim()
+    .replace(/;\s*$/, '')
+    .replace(/^(?:(?:this\.)?page\.)/, '')
+    .replace(/locator\(([^()]*)\)\.contentFrame\(\)/g, 'frameLocator($1)')
   let normalized = ''
   for (let index = 0; index < source.length; index++) {
     const char = source[index]!
@@ -3003,6 +3009,51 @@ function extractLocatorExpressions(source: string): string[] {
     startPattern.lastIndex = consumedUntil
   }
   return expressions
+}
+
+/** Reattach a frame scope from live evidence when the model split it from the control locator. */
+function rewriteObservedFrameLocators(changes: FileChange[], candidates: VerifiedLocator[]): FileChange[] {
+  const frameCandidates = new Map<string, Set<string>>()
+  for (const candidate of candidates) {
+    const expression = extractLocatorExpressions(candidate.expression)[0]
+    if (!expression) continue
+    const normalized = normalizeLocatorExpression(expression)
+    if (!normalized.includes('frameLocator(')) continue
+    const details = locatorCallDetails(expression)
+    if (!details || details.method === 'frameLocator') continue
+    const leaf = normalizeLocatorExpression(`${details.method}(${details.args})`)
+    const matches = frameCandidates.get(leaf) ?? new Set<string>()
+    matches.add(expression)
+    frameCandidates.set(leaf, matches)
+  }
+  if (frameCandidates.size === 0) return changes
+
+  return changes.map((change) => {
+    if (!/\.locators\.tsx?$/i.test(change.path) || !change.newContent) return change
+    const source = change.newContent.replace(
+      /^(\s*readonly\s+[A-Za-z_$][\w$]*\s*=\s*)([^;\r\n]+)(;?\s*)$/gm,
+      (line, prefix: string, current: string, suffix: string) => {
+        const currentExpression = extractLocatorExpressions(current)[0]
+        if (!currentExpression || normalizeLocatorExpression(currentExpression).includes('frameLocator(')) return line
+        const details = locatorCallDetails(currentExpression)
+        if (!details || details.method === 'frameLocator') return line
+        const leaf = normalizeLocatorExpression(`${details.method}(${details.args})`)
+        const observed = frameCandidates.get(leaf)
+        if (!observed || observed.size !== 1) return line
+        const scopedExpression = [...observed][0]!
+          .replace(/^(?:(?:this\.)?page\.)/, '')
+        return `${prefix}this.page.${scopedExpression}${suffix}`
+      },
+    )
+    return source === change.newContent
+      ? change
+      : {
+          ...change,
+          newContent: source,
+          reason: `${change.reason ?? ''} Reattached a uniquely observed iframe scope to its matching locator.`.trim(),
+          evidence: [...(change.evidence ?? []), 'The element role and accessible name matched one iframe-scoped Playwright snapshot locator.'],
+        }
+  })
 }
 
 function matchingParen(source: string, opening: number): number {

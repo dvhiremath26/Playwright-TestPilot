@@ -696,6 +696,13 @@ export async function gatherEvidenceForTestCase(
     if (!ready.ok) {
       throw new Error(`${label} did not reach both the load and network-idle states: ${ready.error ?? 'browser readiness wait failed'}.`)
     }
+    if (/networkidle timed out/i.test(ready.output ?? '')) {
+      evidence.push({
+        kind: 'eval',
+        detail: `${label}: ${ready.output}`,
+        source: ready.provenance,
+      })
+    }
   }
 
   async function candidatesForStep(

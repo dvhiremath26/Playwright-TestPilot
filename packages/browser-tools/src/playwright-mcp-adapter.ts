@@ -19,6 +19,7 @@
 
 import { spawn } from 'node:child_process'
 import { redact, spawnErrorMessage } from './redaction-helpers.ts'
+import { PAGE_READINESS_CODE } from './page-readiness.ts'
 
 import type {
   BrowserActionResult,
@@ -123,8 +124,7 @@ export class PlaywrightMcpAdapter implements BrowserTool {
     if (!runCodeTool) {
       return { ok: false, error: 'Playwright MCP does not expose a Playwright code tool required to wait for load and networkidle.' }
     }
-    const code = 'async page => { await page.waitForLoadState("load", { timeout: 10000 }); await page.waitForLoadState("networkidle", { timeout: 15000 }); return "Page reached load and networkidle"; }'
-    return this.call(runCodeTool, { code }, options)
+    return this.call(runCodeTool, { code: PAGE_READINESS_CODE }, options)
   }
 
   async snapshot(target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {

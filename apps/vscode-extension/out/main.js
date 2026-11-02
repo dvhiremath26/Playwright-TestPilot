@@ -285845,6 +285845,38 @@ function spawnErrorMessage(err, command) {
   return spawnErrorCode(err) === "ENOENT" ? `Command not found: ${command}` : String(err);
 }
 
+// packages/browser-tools/src/page-readiness.ts
+var PAGE_READINESS_CODE = `async page => {
+  await page.waitForLoadState('load', { timeout: 10000 });
+  try {
+    await page.waitForLoadState('networkidle', { timeout: 12000 });
+    return 'Page reached load and networkidle';
+  } catch {
+    const settling = await page.evaluate(async () => {
+      if (!document.documentElement || !document.body) return 'document body unavailable';
+      return await new Promise(resolve => {
+        let observer;
+        let quietTimer;
+        const finish = result => {
+          observer.disconnect();
+          clearTimeout(quietTimer);
+          clearTimeout(maxTimer);
+          resolve(result);
+        };
+        const maxTimer = setTimeout(() => finish('DOM did not become quiet within 5 seconds'), 5000);
+        const startQuietWindow = () => {
+          clearTimeout(quietTimer);
+          quietTimer = setTimeout(() => finish('DOM remained quiet for 1000ms'), 1000);
+        };
+        observer = new MutationObserver(startQuietWindow);
+        observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+        startQuietWindow();
+      });
+    });
+    return 'Page reached load; networkidle timed out; ' + settling;
+  }
+}`;
+
 // packages/browser-tools/src/playwright-cli-adapter.ts
 var DEFAULT_TIMEOUT_MS = 3e4;
 var MAX_PARENT_SEARCH = 5;
@@ -285947,8 +285979,7 @@ var PlaywrightCliAdapter = class {
     return this.run(["goto", url], options);
   }
   async waitForPageReady(options) {
-    const code = 'async page => { await page.waitForLoadState("load", { timeout: 10000 }); await page.waitForLoadState("networkidle", { timeout: 15000 }); return "Page reached load and networkidle"; }';
-    return this.run(["run-code", code], options);
+    return this.run(["run-code", PAGE_READINESS_CODE], options);
   }
   async snapshot(target, options) {
     const args = ["snapshot", ...target === void 0 ? [] : [target], "--depth=12"];
@@ -286199,8 +286230,7 @@ var PlaywrightMcpAdapter = class {
     if (!runCodeTool) {
       return { ok: false, error: "Playwright MCP does not expose a Playwright code tool required to wait for load and networkidle." };
     }
-    const code = 'async page => { await page.waitForLoadState("load", { timeout: 10000 }); await page.waitForLoadState("networkidle", { timeout: 15000 }); return "Page reached load and networkidle"; }';
-    return this.call(runCodeTool, { code }, options);
+    return this.call(runCodeTool, { code: PAGE_READINESS_CODE }, options);
   }
   async snapshot(target, options) {
     return this.call("browser_snapshot", target ? { target } : {}, options);
@@ -287153,6 +287183,13 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
     const ready = await browser.waitForPageReady({ signal: options.signal });
     if (!ready.ok) {
       throw new Error(`${label} did not reach both the load and network-idle states: ${ready.error ?? "browser readiness wait failed"}.`);
+    }
+    if (/networkidle timed out/i.test(ready.output ?? "")) {
+      evidence.push({
+        kind: "eval",
+        detail: `${label}: ${ready.output}`,
+        source: ready.provenance
+      });
     }
   }
   async function candidatesForStep(observed, stepOrder, stepAction, pageUrl, elements = observed.elements.filter((item) => item.actionable !== false).slice(0, 20)) {

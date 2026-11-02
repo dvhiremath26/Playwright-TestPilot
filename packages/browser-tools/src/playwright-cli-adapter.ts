@@ -27,6 +27,7 @@ import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { redact, spawnErrorMessage } from './redaction-helpers.ts'
+import { PAGE_READINESS_CODE } from './page-readiness.ts'
 
 import type {
   BrowserActionResult,
@@ -232,8 +233,7 @@ export class PlaywrightCliAdapter implements BrowserTool {
   }
 
   async waitForPageReady(options?: BrowserCallOptions): Promise<BrowserActionResult> {
-    const code = 'async page => { await page.waitForLoadState("load", { timeout: 10000 }); await page.waitForLoadState("networkidle", { timeout: 15000 }); return "Page reached load and networkidle"; }'
-    return this.run(['run-code', code], options)
+    return this.run(['run-code', PAGE_READINESS_CODE], options)
   }
 
   async snapshot(target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {

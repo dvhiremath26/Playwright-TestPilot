@@ -57,7 +57,8 @@ credentials.
 
 Follow Steps replays explicit URLs and supported click, text-entry, check/uncheck, and
 expand/collapse actions against live accessibility snapshots. It waits for page load and
-network idle before inspecting the next screen. Locator candidates are generated from
+network idle before inspecting the next screen. If long-lived application requests prevent
+network idle, it waits for a bounded DOM-quiet window after page load. Locator candidates are generated from
 observed refs and scoped to the step and screen where they were seen. If the snapshot exposes
 only generic labels, TestPilot inspects visible interactive DOM nodes and uses observed text,
 roles, or SAP/Fiori control attributes to build a unique candidate. The selected model chooses
@@ -112,8 +113,9 @@ Verified in the current workspace:
 - Saved task continuation through `resume`, with repository drift checks before generation
   and apply.
 - CLI plan, deterministic proposal generation, apply, and validation commands.
-- VS Code extension build 0.1.56 adds DOM-grounded locator discovery when accessibility
-  snapshots expose only generic labels and rejects specs with missing step actions; packaged
+- VS Code extension build 0.1.57 adds a bounded DOM-stability fallback when SAP/Fiori
+  long-polling prevents network-idle, alongside DOM-grounded locator discovery and missing-step
+  rejection; packaged
   builds also include step-by-step inspection,
   isolated CLI/MCP sessions, and bounded page-readiness waits. A live extension-host run
   against the user's SAP application remains unverified.

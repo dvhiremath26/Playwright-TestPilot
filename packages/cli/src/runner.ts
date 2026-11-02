@@ -1031,6 +1031,93 @@ async function inspectVisibleDomTargets(
   signal?: AbortSignal,
   includeSidebarCandidates = false,
 ): Promise<BrowserElementRef[]> {
+  // Playwright CLI can inspect cross-origin frames through Playwright's Frame API.
+  // The old page.evaluate path below is limited to the main document and would miss
+  // the common SAP/Fiori case where the shell is visible but the active form is framed.
+  const frameInspection = await browser.runCode(`async page => {
+    const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI';
+    const results = [];
+    const frames = page.frames();
+    for (const frame of frames.slice(1, 41)) {
+      const frameSelectors = [];
+      let child = frame;
+      let safePath = true;
+      while (child.parentFrame()) {
+        const parent = child.parentFrame();
+        let frameElement;
+        try { frameElement = await child.frameElement(); } catch { safePath = false; break; }
+        if (!parent || !frameElement) { safePath = false; break; }
+        const identity = await frameElement.evaluate(el => {
+          const doc = el.ownerDocument;
+          const all = Array.from(doc.querySelectorAll('iframe'));
+          const unique = (attribute, value) => Boolean(value) && all.filter(item => item.getAttribute(attribute) === value).length === 1;
+          return {
+            id: el.id || '', name: el.getAttribute('name') || '', title: el.getAttribute('title') || '',
+            index: all.indexOf(el),
+            idUnique: unique('id', el.id), nameUnique: unique('name', el.getAttribute('name')),
+            titleUnique: unique('title', el.getAttribute('title'))
+          };
+        });
+        if (identity.id && identity.idUnique) frameSelectors.unshift({ selector: 'iframe[id=' + JSON.stringify(identity.id) + ']' });
+        else if (identity.name && identity.nameUnique) frameSelectors.unshift({ selector: 'iframe[name=' + JSON.stringify(identity.name) + ']' });
+        else if (identity.title && identity.titleUnique) frameSelectors.unshift({ selector: 'iframe[title=' + JSON.stringify(identity.title) + ']' });
+        else if (identity.index >= 0) frameSelectors.unshift({ selector: 'iframe', ordinal: identity.index });
+        else { safePath = false; break; }
+        child = parent;
+      }
+      if (!safePath || frameSelectors.length === 0) continue;
+      const rows = await frame.locator('body').evaluate((body, selector) => {
+        const roots = [body.ownerDocument];
+        for (let i = 0; i < roots.length && i < 40; i++) {
+          for (const node of roots[i].querySelectorAll('*')) if (node.shadowRoot) roots.push(node.shadowRoot);
+        }
+        const nodes = roots.flatMap(root => Array.from(root.querySelectorAll(selector)));
+        const idCounts = new Map();
+        for (const root of roots) for (const node of root.querySelectorAll('[id]')) idCounts.set(node.id, (idCounts.get(node.id) || 0) + 1);
+        const seen = new Set();
+        return nodes.filter(el => {
+          if (seen.has(el)) return false;
+          seen.add(el);
+          const rect = el.getBoundingClientRect();
+          const style = getComputedStyle(el);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && el.getAttribute('aria-hidden') !== 'true';
+        }).map(el => {
+          const tag = el.tagName.toLowerCase();
+          const explicitRole = el.getAttribute('role');
+          const classes = typeof el.className === 'string' ? el.className : '';
+          const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : '';
+          const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
+          const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
+          const control = core && el.id ? core.byId(el.id) : undefined;
+          const labels = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map(id => {
+            const root = el.getRootNode(); const label = root.getElementById ? root.getElementById(id) : el.ownerDocument.getElementById(id);
+            return label ? (label.innerText || label.textContent || '') : '';
+          }).join(' ');
+          const associated = el.labels ? Array.from(el.labels).map(label => label.innerText || label.textContent || '').join(' ') : '';
+          const ui5Name = ['getAccessibleName','getAriaLabel','getPlaceholder','getTooltip','getTitle','getText'].map(method => {
+            try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
+          }).find(value => typeof value === 'string' && value.trim()) || '';
+          const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+          const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
+          const id = el.id || '';
+          const context = [el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || ''), control && control.getMetadata && control.getMetadata().getName()].filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 180);
+          return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), context, navigation: Boolean(nav) };
+        });
+      }, selector);
+      const searchboxes = rows.filter(row => row.role === 'searchbox').length;
+      for (const row of rows) {
+        if (!row.name && !(row.role === 'searchbox' && searchboxes === 1)) continue;
+        results.push({ ...row, frameSelectors, uniqueSearchbox: row.role === 'searchbox' && searchboxes === 1 });
+      }
+    }
+    return JSON.stringify(results.slice(0, 240));
+  }`, { signal, timeoutMs: 12_000 })
+  if (frameInspection.ok && frameInspection.output) {
+    const rows = parseEvaluatedFrameDomRows(frameInspection.output)
+    const frameTargets = buildFrameDomTargets(rows, requestedTarget, includeSidebarCandidates)
+    if (frameTargets.length > 0) return frameTargets
+  }
+
   const inspected = await browser.execute(
     (tool, callOptions) => tool.eval(`() => {
       const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI';
@@ -1154,6 +1241,105 @@ function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: str
   } catch {
     return []
   }
+}
+
+interface FrameDomRow {
+  role?: string
+  name: string
+  id?: string
+  uniqueId?: boolean
+  uniqueSearchbox?: boolean
+  context?: string
+  navigation?: boolean
+  frameSelectors: Array<{ selector: string; ordinal?: number }>
+}
+
+function parseEvaluatedFrameDomRows(output: string): FrameDomRow[] {
+  const start = output.indexOf('[')
+  const end = output.lastIndexOf(']')
+  if (start < 0 || end <= start) return []
+  try {
+    const value: unknown = JSON.parse(output.slice(start, end + 1))
+    if (!Array.isArray(value)) return []
+    return value.flatMap((item) => {
+      if (!item || typeof item !== 'object') return []
+      const row = item as Record<string, unknown>
+      if (!Array.isArray(row.frameSelectors)) return []
+      const frameSelectors = row.frameSelectors.flatMap((segment) => {
+        if (!segment || typeof segment !== 'object') return []
+        const value = segment as { selector?: unknown; ordinal?: unknown }
+        return typeof value.selector === 'string'
+          ? [{ selector: value.selector, ...(typeof value.ordinal === 'number' ? { ordinal: value.ordinal } : {}) }]
+          : []
+      })
+      if (frameSelectors.length === 0) return []
+      return [{
+        role: typeof row.role === 'string' ? row.role : undefined,
+        name: typeof row.name === 'string' ? row.name.trim() : '',
+        id: typeof row.id === 'string' ? row.id : undefined,
+        uniqueId: row.uniqueId === true,
+        uniqueSearchbox: row.uniqueSearchbox === true,
+        context: typeof row.context === 'string' ? row.context : undefined,
+        navigation: row.navigation === true,
+        frameSelectors,
+      }]
+    })
+  } catch {
+    return []
+  }
+}
+
+function buildFrameDomTargets(
+  rows: FrameDomRow[],
+  requestedTarget: string,
+  includeSidebarCandidates: boolean,
+): BrowserElementRef[] {
+  const wanted = normalizeWords(requestedTarget)
+  const ranked = rows.map((row) => ({
+    ...row,
+    score: isSearchTarget(requestedTarget) && row.role === 'searchbox' && row.uniqueSearchbox
+      ? 0.9
+      : Math.max(
+          textMatchScore(normalizeWords(row.name), wanted),
+          textMatchScore(normalizeWords(row.context ?? ''), wanted) * 0.85,
+        ),
+  })).filter((row) =>
+    row.score >= 0.35 || (isSearchTarget(requestedTarget) && row.role === 'searchbox' && row.uniqueSearchbox) ||
+    (includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.frameSelectors.length > 0),
+  ).sort((a, b) => b.score - a.score || Number(b.navigation) - Number(a.navigation)).slice(0, 20)
+
+  const counts = new Map<string, number>()
+  for (const row of ranked) {
+    const key = `${row.frameSelectors.map((item) => `${item.selector}:${item.ordinal ?? ''}`).join('>')}\u0000${row.role ?? ''}\u0000${row.name}`
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  return ranked.flatMap((row) => {
+    const frameScope = row.frameSelectors.map((segment) => segment.ordinal === undefined
+      ? `frameLocator(${JSON.stringify(segment.selector)})`
+      : `frameLocator(${JSON.stringify(segment.selector)}).nth(${segment.ordinal})`,
+    ).join('.')
+    const duplicate = (counts.get(`${row.frameSelectors.map((item) => `${item.selector}:${item.ordinal ?? ''}`).join('>')}\u0000${row.role ?? ''}\u0000${row.name}`) ?? 0) > 1
+    const useId = Boolean(row.id && row.uniqueId && (duplicate || (isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.uniqueSearchbox)))
+    if (duplicate && !useId) return []
+    const leaf = useId
+      ? `locator(${JSON.stringify(`[id=${JSON.stringify(row.id)}]`)})`
+      : row.role === 'searchbox' && !row.name && row.uniqueSearchbox
+        ? `getByRole("searchbox")`
+        : row.role && row.name
+          ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })`
+          : undefined
+    if (!leaf) return []
+    const expression = `${frameScope}.${leaf}`
+    return [{
+      ref: expression,
+      role: row.role,
+      name: row.name,
+      actionable: true,
+      locatorExpression: expression,
+      context: row.context,
+      navigation: row.navigation,
+    }]
+  })
 }
 
 function textMatchScore(candidate: string, wanted: string): number {

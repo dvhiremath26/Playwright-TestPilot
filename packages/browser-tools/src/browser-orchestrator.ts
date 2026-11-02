@@ -185,6 +185,20 @@ export class BrowserSession {
     )
   }
 
+  /** Run Playwright code on the active backend when it exposes that capability (CLI only). */
+  async runCode(code: string, options?: BrowserCallOptions): Promise<BrowserActionResult & { provenance: BackendProvenance }> {
+    const active = this.activeBackend
+    if (!active?.runCode) {
+      return {
+        ok: false,
+        error: `${active?.info.label ?? 'Browser backend'} does not expose the Playwright run-code capability.`,
+        provenance: this.makeProvenance(active?.info.id ?? 'playwright-cli', this.usedFallback),
+      }
+    }
+    const result = await active.runCode(code, this.withDefaults(options))
+    return { ...result, provenance: this.makeProvenance(active.info.id, this.usedFallback) }
+  }
+
   /**
    * Capture a snapshot and normalize it.
    *

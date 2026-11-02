@@ -236,6 +236,10 @@ export class PlaywrightCliAdapter implements BrowserTool {
     return this.run(['run-code', PAGE_READINESS_CODE], options)
   }
 
+  async runCode(code: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    return this.run(['run-code', code], options)
+  }
+
   async snapshot(target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
     // Deep navigation menus and nested application controls are common in SAP-style UIs.
     // The CLI's default snapshot depth can omit those descendants, leaving the model with
@@ -249,23 +253,46 @@ export class PlaywrightCliAdapter implements BrowserTool {
   }
 
   async click(target: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    const frameAction = this.runFrameLocatorAction(target, 'click', undefined, options)
+    if (frameAction) return frameAction
     return this.run(['click', target], options)
   }
 
   async type(target: string, text: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    const frameAction = this.runFrameLocatorAction(target, 'pressSequentially', text, options)
+    if (frameAction) return frameAction
     return this.run(['type', target, text], options)
   }
 
   async fill(target: string, text: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    const frameAction = this.runFrameLocatorAction(target, 'fill', text, options)
+    if (frameAction) return frameAction
     return this.run(['fill', target, text], options)
   }
 
   async check(target: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    const frameAction = this.runFrameLocatorAction(target, 'check', undefined, options)
+    if (frameAction) return frameAction
     return this.run(['check', target], options)
   }
 
   async uncheck(target: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    const frameAction = this.runFrameLocatorAction(target, 'uncheck', undefined, options)
+    if (frameAction) return frameAction
     return this.run(['uncheck', target], options)
+  }
+
+  private runFrameLocatorAction(
+    target: string,
+    action: 'click' | 'pressSequentially' | 'fill' | 'check' | 'uncheck',
+    value: string | undefined,
+    options?: BrowserCallOptions,
+  ): Promise<BrowserActionResult> | undefined {
+    if (!/^(?:(?:this\.)?page\.)?frameLocator\(/.test(target)) return undefined
+    const locator = target.replace(/^(?:this\.)?page\./, 'page.')
+    const args = value === undefined ? '' : JSON.stringify(value)
+    const code = `async page => { const locator = ${locator}; await locator.${action}(${args}); return 'Frame-scoped ${action} completed'; }`
+    return this.run(['run-code', code], options)
   }
 
   async eval(expression: string, target?: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {

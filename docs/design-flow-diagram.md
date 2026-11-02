@@ -68,6 +68,12 @@ that are unsupported or still ambiguous stop inspection rather than receiving a 
 locator. Start Page Only captures the initial screen and offers candidates only for the first
 actionable step.
 
+The Playwright CLI DOM inspection also enumerates visible controls in attached frames, including
+cross-origin frames. It records a frame-scoped locator from the observed iframe identity and uses
+that locator for the replay action. The MCP fallback relies on frame-prefixed accessibility refs
+when available; if the MCP snapshot does not identify a frame control, it does not invent a frame
+selector.
+
 Iframe controls are supported from frame-scoped snapshot refs. Playwright CLI is the primary
 backend; generated locator expressions retain the observed `frameLocator`/`contentFrame` chain,
 and framework validation compares that complete chain against the evidence. Playwright MCP

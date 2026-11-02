@@ -116,6 +116,9 @@ export interface BrowserTool {
   /** Fill an editable element, replacing its contents. */
   fill(target: string, text: string, options?: BrowserCallOptions): Promise<BrowserActionResult>
 
+  /** Evaluate an async Playwright `page => ...` snippet in the browser context when supported. */
+  runCode?(code: string, options?: BrowserCallOptions): Promise<BrowserActionResult>
+
   /** Check a checkbox or radio using the backend's idempotent check operation. */
   check?(target: string, options?: BrowserCallOptions): Promise<BrowserActionResult>
 

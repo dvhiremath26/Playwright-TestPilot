@@ -287293,7 +287293,7 @@ async function gatherEvidenceForTestCase(browser, options) {
             ).map((candidate) => candidate.element);
           }
         }
-        const preActionSnapshot = snapshot;
+        let preActionSnapshot = snapshot;
         let target;
         if (options.selectSnapshotTarget) {
           try {
@@ -287313,35 +287313,74 @@ async function gatherEvidenceForTestCase(browser, options) {
           sidebarTrialForStep = await retrySidebarNavigationCandidates(stepIndex, action, snapshot, currentUrl);
           if (sidebarTrialForStep) target = sidebarTrialForStep.target;
         }
-        const candidateElements = target ? [target] : [];
-        locatorCandidates.push(...await candidatesForStep(
-          preActionSnapshot,
-          step.order,
-          step.action,
-          currentUrl,
-          candidateElements
-        ));
         if (!target) {
           throw new SnapshotTargetUnavailableError(`Step ${step.order} could not be replayed safely: no unique ${action.kind === "fill" ? "editable control" : "control"} matching "${action.target}" was found in the current browser evidence. No later screen evidence was collected.`);
         }
         if (action.kind === "fill" && !action.value) {
           throw new Error(`Step ${step.order} could not be replayed safely: no input value was found for "${action.target}".`);
         }
-        const result = sidebarTrialForStep?.result ?? await browser.execute(
+        const executeActionTarget = (candidate) => browser.execute(
           async (tool, callOptions) => {
             switch (action.kind) {
               case "fill":
-                return tool.fill(target.locatorExpression ?? target.ref, action.value, callOptions);
+                return tool.fill(candidate.locatorExpression ?? candidate.ref, action.value, callOptions);
               case "check":
-                return tool.check ? tool.check(target.locatorExpression ?? target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox check operations.` };
+                return tool.check ? tool.check(candidate.locatorExpression ?? candidate.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox check operations.` };
               case "uncheck":
-                return tool.uncheck ? tool.uncheck(target.locatorExpression ?? target.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox uncheck operations.` };
+                return tool.uncheck ? tool.uncheck(candidate.locatorExpression ?? candidate.ref, callOptions) : { ok: false, error: `${tool.info.label} does not support safe checkbox uncheck operations.` };
               default:
-                return tool.click(target.locatorExpression ?? target.ref, callOptions);
+                return tool.click(candidate.locatorExpression ?? candidate.ref, callOptions);
             }
           },
           { signal: options.signal }
         );
+        let result = sidebarTrialForStep?.result ?? await executeActionTarget(target);
+        let recoveredFrameLocator = false;
+        if (!result.ok && isSafeLocatorNoMatch(result.error)) {
+          const refreshed = await browser.capture(void 0, { signal: options.signal });
+          if (refreshed) {
+            snapshot = refreshed;
+            preActionSnapshot = refreshed;
+            const refreshedDom = await inspectVisibleDomTargets(browser, action.target, options.signal);
+            if (refreshedDom.length > 0) {
+              const refs = new Set(snapshot.elements.map((element) => element.ref));
+              const additions = refreshedDom.filter((element) => !refs.has(element.ref));
+              if (additions.length > 0) snapshot = { ...snapshot, elements: [...snapshot.elements, ...additions] };
+            }
+            const attempted = /* @__PURE__ */ new Set([target.locatorExpression ?? target.ref]);
+            const retryTargets = findActionTargets(
+              snapshot,
+              action.target,
+              action.kind,
+              action.kind === "click" && Boolean(action.intent),
+              isSearchTarget(action.target)
+            ).filter((candidate) => candidate.score >= 0.75).map((candidate) => candidate.element).filter((candidate) => {
+              const expression = candidate.locatorExpression ?? candidate.ref;
+              if (attempted.has(expression)) return false;
+              attempted.add(expression);
+              return true;
+            }).slice(0, 4);
+            for (const retryTarget of retryTargets) {
+              if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
+              result = await executeActionTarget(retryTarget);
+              if (result.ok) {
+                target = retryTarget;
+                recoveredFrameLocator = true;
+                break;
+              }
+              if (!isSafeLocatorNoMatch(result.error)) break;
+            }
+          }
+        }
+        if (result.ok && !sidebarTrialForStep) {
+          locatorCandidates.push(...await candidatesForStep(
+            preActionSnapshot,
+            step.order,
+            step.action,
+            currentUrl,
+            [target]
+          ));
+        }
         const clickTriggeredNavigationWaitTimeout = action.kind === "click" && !result.ok && isClickNavigationWaitTimeout(result.error);
         let mcpTimeoutProgressed = false;
         if (action.kind === "click" && !result.ok && isMcpToolCallTimeout(result.error)) {
@@ -287361,7 +287400,7 @@ async function gatherEvidenceForTestCase(browser, options) {
         if (!sidebarTrialForStep) await waitForPageReady(`Step ${step.order} action`);
         evidence.push({
           kind: "interaction",
-          detail: sidebarTrialForStep ? `Step ${step.order} selected sidebar locator ${target.ref} after candidate attempt ${sidebarTrialForStep.attempt}; the following step's target was visible: ${step.action}` : clickTriggeredNavigationWaitTimeout ? `Step ${step.order} click completed, but the CLI timed out waiting for the scheduled navigation; the flow continued without repeating the click: ${step.action}` : mcpTimeoutProgressed ? `Step ${step.order} MCP click timed out, but a fresh snapshot confirmed a changed screen and the next step's target; the click was not repeated: ${step.action}` : `Step ${step.order} replayed: ${step.action}`,
+          detail: sidebarTrialForStep ? `Step ${step.order} selected sidebar locator ${target.ref} after candidate attempt ${sidebarTrialForStep.attempt}; the following step's target was visible: ${step.action}` : clickTriggeredNavigationWaitTimeout ? `Step ${step.order} click completed, but the CLI timed out waiting for the scheduled navigation; the flow continued without repeating the click: ${step.action}` : mcpTimeoutProgressed ? `Step ${step.order} MCP click timed out, but a fresh snapshot confirmed a changed screen and the next step's target; the click was not repeated: ${step.action}` : recoveredFrameLocator ? `Step ${step.order}: refreshed frame evidence after a stale locator and succeeded with another observed matching locator: ${step.action}` : `Step ${step.order} replayed: ${step.action}`,
           source: result.provenance ?? browser.provenance ?? navigation.source
         });
         const location = sidebarTrialForStep ? void 0 : await browser.execute(
@@ -287561,14 +287600,16 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const unique = (attribute, value) => Boolean(value) && all.filter(item => item.getAttribute(attribute) === value).length === 1;
           return {
             id: el.id || '', name: el.getAttribute('name') || '', title: el.getAttribute('title') || '',
+            src: el.getAttribute('src') || '',
             index: all.indexOf(el),
             idUnique: unique('id', el.id), nameUnique: unique('name', el.getAttribute('name')),
-            titleUnique: unique('title', el.getAttribute('title'))
+            titleUnique: unique('title', el.getAttribute('title')), srcUnique: unique('src', el.getAttribute('src'))
           };
         });
         if (identity.id && identity.idUnique) frameSelectors.unshift({ selector: 'iframe[id=' + JSON.stringify(identity.id) + ']' });
         else if (identity.name && identity.nameUnique) frameSelectors.unshift({ selector: 'iframe[name=' + JSON.stringify(identity.name) + ']' });
         else if (identity.title && identity.titleUnique) frameSelectors.unshift({ selector: 'iframe[title=' + JSON.stringify(identity.title) + ']' });
+        else if (identity.src && identity.srcUnique) frameSelectors.unshift({ selector: 'iframe[src=' + JSON.stringify(identity.src) + ']' });
         else if (identity.index >= 0) frameSelectors.unshift({ selector: 'iframe', ordinal: identity.index });
         else { safePath = false; break; }
         child = parent;
@@ -287822,6 +287863,9 @@ function isClickNavigationWaitTimeout(error) {
 }
 function isMcpToolCallTimeout(error) {
   return Boolean(error && /MCP request ["']tools\/call["'] timed out/i.test(error));
+}
+function isSafeLocatorNoMatch(error) {
+  return Boolean(error && !/click action done/i.test(error) && /does not match any elements|no element(?:s)? matched|resolved to no elements|no element found/i.test(error));
 }
 function parseSnapshotTargetSelection(text) {
   const normalized = text.trim().replace(/^```(?:json)?\s*|\s*```$/gi, "").trim();

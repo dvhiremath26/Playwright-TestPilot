@@ -1080,7 +1080,7 @@ async function inspectVisibleDomTargets(
   // The old page.evaluate path below is limited to the main document and would miss
   // the common SAP/Fiori case where the shell is visible but the active form is framed.
   const frameInspection = await browser.runCode(`async page => {
-    const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI';
+    const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSF';
     const results = [];
     const frames = page.frames();
     for (const frame of frames.slice(1, 41)) {
@@ -1133,12 +1133,13 @@ async function inspectVisibleDomTargets(
           const explicitRole = el.getAttribute('role');
           const classes = typeof el.className === 'string' ? el.className : '';
           const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : '';
-          const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
+          const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || /sapMSFI|sapMSF/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
           const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
           const control = core && el.id ? core.byId(el.id) : undefined;
           const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
           let icon = ''; try { icon = control && typeof control.getIcon === 'function' ? control.getIcon() || '' : ''; } catch {}
-          const searchButton = role === 'button' && /search/i.test(icon) && Boolean(el.id && idCounts.get(el.id) === 1);
+          const iconMetadata = [icon, el.getAttribute('icon'), el.getAttribute('data-icon'), el.getAttribute('data-sap-ui-icon'), el.querySelector('[data-sap-ui-icon-content]')?.getAttribute('data-sap-ui-icon-content')].filter(Boolean).join(' ');
+          const searchButton = (role === 'button' || role === 'generic') && /(?:search|sys-find)/i.test(iconMetadata) && Boolean(el.id && idCounts.get(el.id) === 1);
           const labels = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map(id => {
             const root = el.getRootNode(); const label = root.getElementById ? root.getElementById(id) : el.ownerDocument.getElementById(id);
             return label ? (label.innerText || label.textContent || '') : '';
@@ -1157,7 +1158,7 @@ async function inspectVisibleDomTargets(
       }, selector);
       const searchboxes = rows.filter(row => row.role === 'searchbox').length;
       for (const row of rows) {
-        if (!row.name && !(row.role === 'searchbox' && searchboxes === 1) && !row.uniqueHelpId) continue;
+        if (!row.name && !(row.role === 'searchbox' && searchboxes === 1) && !row.uniqueHelpId && !(row.searchButton && row.uniqueId)) continue;
         results.push({ ...row, frameSelectors, uniqueSearchbox: row.role === 'searchbox' && searchboxes === 1 });
       }
     }
@@ -1171,7 +1172,7 @@ async function inspectVisibleDomTargets(
 
   const inspected = await browser.execute(
     (tool, callOptions) => tool.eval(`() => {
-      const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI';
+      const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSF';
       const allowUnnamedSearch = ${isSearchTarget(requestedTarget)};
       const roots = [document];
       for (let index = 0; index < roots.length && index < 40; index++) {
@@ -1195,12 +1196,13 @@ async function inspectVisibleDomTargets(
         const explicitRole = el.getAttribute('role');
         const classes = typeof el.className === 'string' ? el.className : '';
         const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : '';
-        const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || /sapMBtn/.test(classes) ? 'button' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
+        const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || /sapMSFI|sapMSF/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
         const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
         const control = core && el.id ? core.byId(el.id) : undefined;
         const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
         let icon = ''; try { icon = control && typeof control.getIcon === 'function' ? control.getIcon() || '' : ''; } catch {}
-        const searchButton = role === 'button' && /search/i.test(icon) && Boolean(el.id && idCounts.get(el.id) === 1);
+        const iconMetadata = [icon, el.getAttribute('icon'), el.getAttribute('data-icon'), el.getAttribute('data-sap-ui-icon'), el.querySelector('[data-sap-ui-icon-content]')?.getAttribute('data-sap-ui-icon-content')].filter(Boolean).join(' ');
+        const searchButton = (role === 'button' || role === 'generic') && /(?:search|sys-find)/i.test(iconMetadata) && Boolean(el.id && idCounts.get(el.id) === 1);
         const ui5Labels = ['getText', 'getTitle', 'getTooltip', 'getAccessibleName', 'getAriaLabel', 'getHeaderText', 'getLabel', 'getPlaceholder'].map((method) => {
           try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
         }).filter((value) => typeof value === 'string' && value.trim());
@@ -1215,7 +1217,7 @@ async function inspectVisibleDomTargets(
         const parentTexts = [el.parentElement, el.parentElement && el.parentElement.parentElement].filter(Boolean).map((parent) => (parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean);
         const context = [...new Set([parentTexts[0], parentTexts[1], controlType].filter(Boolean))].join(' | ').slice(0, 180);
         return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), searchButton, context, navigation: Boolean(nav) };
-      }).filter((item) => (item.name && (item.name.length > 1 || item.navigation)) || (allowUnnamedSearch && item.role === 'searchbox')).slice(0, 160);
+      }).filter((item) => (item.name && (item.name.length > 1 || item.navigation)) || (allowUnnamedSearch && item.role === 'searchbox') || (allowUnnamedSearch && item.searchButton && item.uniqueId)).slice(0, 160);
     }`, undefined, callOptions),
     { signal },
   )
@@ -1360,12 +1362,15 @@ function buildFrameDomTargets(
     ...row,
     score: isSearchTarget(requestedTarget) && row.role === 'searchbox' && row.uniqueSearchbox
       ? 0.9
+      : isSearchTarget(requestedTarget) && row.searchButton && row.uniqueId
+      ? 0.9
       : Math.max(
           textMatchScore(normalizeWords(row.name), wanted),
           textMatchScore(normalizeWords(row.context ?? ''), wanted) * 0.85,
         ),
   })).filter((row) =>
     row.score >= 0.35 || (isSearchTarget(requestedTarget) && row.role === 'searchbox' && row.uniqueSearchbox) ||
+    (isSearchTarget(requestedTarget) && row.searchButton && row.uniqueId) ||
     (includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.frameSelectors.length > 0),
   ).sort((a, b) => b.score - a.score || Number(b.navigation) - Number(a.navigation)).slice(0, 20)
 

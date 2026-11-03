@@ -289287,10 +289287,13 @@ function locatorRoleAndName(expression) {
 function locatorFrameScope(expression) {
   const details = locatorCallDetails(expression);
   if (!details || details.method === "frameLocator") return void 0;
-  const lastCallIndex = expression.lastIndexOf(`.${details.method}(`);
+  const methodCall = new RegExp(`\\s*\\.\\s*${details.method}\\s*\\(`, "g");
+  let match;
+  let lastCallIndex = -1;
+  while ((match = methodCall.exec(expression)) !== null) lastCallIndex = match.index;
   if (lastCallIndex < 0) return void 0;
   const scope = expression.slice(0, lastCallIndex).trim();
-  return scope.includes("frameLocator(") ? scope : void 0;
+  return /(?:frameLocator\(|\.\s*contentFrame\s*\()/.test(scope) ? scope : void 0;
 }
 function matchingParen(source, opening) {
   let depth = 0;

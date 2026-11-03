@@ -3393,10 +3393,13 @@ function locatorRoleAndName(expression: string): { role: string; name: string } 
 function locatorFrameScope(expression: string): string | undefined {
   const details = locatorCallDetails(expression)
   if (!details || details.method === 'frameLocator') return undefined
-  const lastCallIndex = expression.lastIndexOf(`.${details.method}(`)
+  const methodCall = new RegExp(`\\s*\\.\\s*${details.method}\\s*\\(`, 'g')
+  let match: RegExpExecArray | null
+  let lastCallIndex = -1
+  while ((match = methodCall.exec(expression)) !== null) lastCallIndex = match.index
   if (lastCallIndex < 0) return undefined
   const scope = expression.slice(0, lastCallIndex).trim()
-  return scope.includes('frameLocator(') ? scope : undefined
+  return /(?:frameLocator\(|\.\s*contentFrame\s*\()/.test(scope) ? scope : undefined
 }
 
 function matchingParen(source: string, opening: number): number {

@@ -105,6 +105,22 @@ describe('rewriteObservedFrameLocators', () => {
     expect(rewritten).not.toContain('Order Type Required')
   })
 
+  it('prefers a matching control in the same frame when accessible names repeat across frames', () => {
+    const input = locatorFile([
+      'export class CreateSalesOrderLocators {',
+      '  readonly CONTINUE = this.page.locator(\'iframe[name="__container155-iframe"]\') .contentFrame() .getByRole("button", { name: "Continue Emphasized" });',
+      '}',
+    ].join('\n'))
+    const candidates = [
+      observed('this.page.frameLocator(\'iframe[name="__container155-iframe"]\').getByRole("button", { name: "Continue", exact: true })', 'button', 'Continue', 5),
+      observed('this.page.frameLocator(\'iframe[name="login-frame"]\').getByRole("button", { name: "Continue", exact: true })', 'button', 'Continue', 2),
+    ]
+
+    const rewritten = rewriteObservedFrameLocators(input, candidates)[0]!.newContent!
+    expect(rewritten).toContain('frameLocator(\'iframe[name="__container155-iframe"]\').getByRole("button", { name: "Continue", exact: true })')
+    expect(rewritten).not.toContain('login-frame')
+  })
+
   it('removes an unused guessed iframe locator after observed controls have been rebound', () => {
     const input = locatorFile([
       'export class XLocators {',

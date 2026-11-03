@@ -1085,6 +1085,8 @@ async function inspectVisibleDomTargets(
         const nodes = roots.flatMap(root => Array.from(root.querySelectorAll(selector)));
         const idCounts = new Map();
         for (const root of roots) for (const node of root.querySelectorAll('[id]')) idCounts.set(node.id, (idCounts.get(node.id) || 0) + 1);
+        const helpIdCounts = new Map();
+        for (const root of roots) for (const node of root.querySelectorAll('[data-help-id]')) { const value = node.getAttribute('data-help-id'); if (value) helpIdCounts.set(value, (helpIdCounts.get(value) || 0) + 1); }
         const seen = new Set();
         return nodes.filter(el => {
           if (seen.has(el)) return false;
@@ -1115,13 +1117,14 @@ async function inspectVisibleDomTargets(
           const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || (searchButton ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
           const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
           const id = el.id || '';
+          const helpId = el.getAttribute('data-help-id') || '';
           const context = [el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || ''), controlType].filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 180);
-          return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), searchButton, context, navigation: Boolean(nav) };
+          return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), helpId, uniqueHelpId: Boolean(helpId && helpIdCounts.get(helpId) === 1), searchButton, context, navigation: Boolean(nav) };
         });
       }, selector);
       const searchboxes = rows.filter(row => row.role === 'searchbox').length;
       for (const row of rows) {
-        if (!row.name && !(row.role === 'searchbox' && searchboxes === 1)) continue;
+        if (!row.name && !(row.role === 'searchbox' && searchboxes === 1) && !row.uniqueHelpId) continue;
         results.push({ ...row, frameSelectors, uniqueSearchbox: row.role === 'searchbox' && searchboxes === 1 });
       }
     }
@@ -1270,6 +1273,8 @@ interface FrameDomRow {
   uniqueId?: boolean
   uniqueSearchbox?: boolean
   searchButton?: boolean
+  helpId?: string
+  uniqueHelpId?: boolean
   context?: string
   navigation?: boolean
   frameSelectors: Array<{ selector: string; ordinal?: number }>
@@ -1301,6 +1306,8 @@ function parseEvaluatedFrameDomRows(output: string): FrameDomRow[] {
         uniqueId: row.uniqueId === true,
         uniqueSearchbox: row.uniqueSearchbox === true,
         searchButton: row.searchButton === true,
+        helpId: typeof row.helpId === 'string' ? row.helpId : undefined,
+        uniqueHelpId: row.uniqueHelpId === true,
         context: typeof row.context === 'string' ? row.context : undefined,
         navigation: row.navigation === true,
         frameSelectors,
@@ -1343,7 +1350,9 @@ function buildFrameDomTargets(
     const duplicate = (counts.get(`${row.frameSelectors.map((item) => `${item.selector}:${item.ordinal ?? ''}`).join('>')}\u0000${row.role ?? ''}\u0000${row.name}`) ?? 0) > 1
     const useId = Boolean(row.id && row.uniqueId && (row.searchButton || duplicate || (isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.uniqueSearchbox)))
     if (duplicate && !useId) return []
-    const leaf = useId
+    const leaf = row.helpId && row.uniqueHelpId
+      ? `locator(${JSON.stringify(`[data-help-id=${JSON.stringify(row.helpId)}]`)})`
+      : useId
       ? `locator(${JSON.stringify(`[id=${JSON.stringify(row.id)}]`)})`
       : row.role === 'searchbox' && !row.name && row.uniqueSearchbox
         ? `getByRole("searchbox")`
@@ -3061,7 +3070,7 @@ function normalizeLocatorExpression(expression: string): string {
   const source = expression.trim()
     .replace(/;\s*$/, '')
     .replace(/^(?:(?:this\.)?page\.)/, '')
-    .replace(/locator\(([^()]*)\)\.contentFrame\(\)/g, 'frameLocator($1)')
+    .replace(/locator\(([^()]*)\)\s*\.\s*contentFrame\s*\(\s*\)/g, 'frameLocator($1)')
   let normalized = ''
   for (let index = 0; index < source.length; index++) {
     const char = source[index]!
@@ -3302,7 +3311,9 @@ export function rewriteObservedFrameLocators(changes: FileChange[], candidates: 
     const matches = frameCandidates.get(leaf) ?? new Set<string>()
     matches.add(expression)
     frameCandidates.set(leaf, matches)
-    const metadata = locatorRoleAndName(expression)
+    const metadata = candidate.role && candidate.name
+      ? { role: candidate.role, name: candidate.name }
+      : locatorRoleAndName(expression)
     if (metadata) observedFrameLocators.push({ expression, ...metadata })
   }
   if (frameCandidates.size === 0 && observedFrameLocators.length === 0) return changes

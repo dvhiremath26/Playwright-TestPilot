@@ -89,6 +89,22 @@ describe('rewriteObservedFrameLocators', () => {
     expect(rewritten).not.toContain('Continue Emphasized')
   })
 
+  it('normalizes a contentFrame chain and prefers a unique observed data-help-id locator', () => {
+    const input = locatorFile([
+      'export class CreateSalesOrderLocators {',
+      '  readonly ORDER_TYPE = this.page.locator(\'iframe[name="__container164-iframe"]\') .contentFrame() .getByRole("textbox", { name: "Order Type Required" });',
+      '}',
+    ].join('\n'))
+    const candidates = [
+      observed('this.page.frameLocator(\'iframe[name="__container155-iframe"]\').locator(\'[data-help-id="S4OrderType"]\')', 'textbox', 'Order Type', 10),
+    ]
+
+    const rewritten = rewriteObservedFrameLocators(input, candidates)[0]!.newContent!
+    expect(rewritten).toContain('frameLocator(\'iframe[name="__container155-iframe"]\').locator(\'[data-help-id="S4OrderType"]\')')
+    expect(rewritten).not.toContain('__container164-iframe')
+    expect(rewritten).not.toContain('Order Type Required')
+  })
+
   it('removes an unused guessed iframe locator after observed controls have been rebound', () => {
     const input = locatorFile([
       'export class XLocators {',

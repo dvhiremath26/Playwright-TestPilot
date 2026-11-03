@@ -679,9 +679,10 @@ export async function gatherEvidenceForTestCase(
         isSearchTarget(action.target),
       )
         .map((candidate) => candidate.element)
-      // Some enterprise shells (including SAP/Fiori) expose poorly named links in
-      // accessibility snapshots. When the snapshot has no plausible candidate,
-      // inspect visible interactive DOM nodes and add only text/role grounded targets.
+      // Accessibility snapshots can identify a control without preserving its
+      // owning iframe in the generated locator. Inspect live DOM targets on every
+      // action so iframe-scoped evidence (including unique data-help-id selectors)
+      // supplements the snapshot even when its accessible name already matched.
       const bestSnapshotScore = findActionTargets(
         snapshot,
         action.target,
@@ -689,33 +690,36 @@ export async function gatherEvidenceForTestCase(
         action.kind === 'click' && Boolean(action.intent),
         isSearchTarget(action.target),
       )[0]?.score ?? 0
-      if (bestSnapshotScore < 0.35) {
-        const domElements = await inspectVisibleDomTargets(
-          browser,
-          action.target,
-          options.signal,
-          isSidebarNavigationStep(step.action),
-        )
-        if (domElements.length > 0) {
-          const afterInspection = await browser.capture(undefined, { signal: options.signal })
-          if (afterInspection) snapshot = afterInspection
-          const existingRefs = new Set(snapshot.elements.map((element) => element.ref))
-          const newElements = domElements.filter((element) => !existingRefs.has(element.ref))
-          if (newElements.length > 0) {
-            snapshot = { ...snapshot, elements: [...snapshot.elements, ...newElements] }
-            compatibleTargets = findActionTargets(
-              snapshot,
-              action.target,
-              action.kind,
-              action.kind === 'click' && Boolean(action.intent),
-              isSearchTarget(action.target),
-            ).map((candidate) => candidate.element)
-            evidence.push({
-              kind: 'snapshot',
-              detail: `Step ${step.order}: enriched generic accessibility snapshot labels with ${newElements.length} visible DOM target(s) for "${action.target}".`,
-              source: browser.provenance ?? navigation.source,
-            })
-          }
+      const domElements = await inspectVisibleDomTargets(
+        browser,
+        action.target,
+        options.signal,
+        isSidebarNavigationStep(step.action),
+      )
+      if (domElements.length > 0) {
+        // run-code can refresh ephemeral CLI refs, so always capture a new snapshot
+        // before selecting/clicking. The DOM locator expressions themselves remain
+        // grounded and can be used for the action if selected.
+        const afterInspection = await browser.capture(undefined, { signal: options.signal })
+        if (afterInspection) snapshot = afterInspection
+        const existingRefs = new Set(snapshot.elements.map((element) => element.ref))
+        const newElements = domElements.filter((element) => !existingRefs.has(element.ref))
+        if (newElements.length > 0) {
+          snapshot = { ...snapshot, elements: [...snapshot.elements, ...newElements] }
+          compatibleTargets = findActionTargets(
+            snapshot,
+            action.target,
+            action.kind,
+            action.kind === 'click' && Boolean(action.intent),
+            isSearchTarget(action.target),
+          ).map((candidate) => candidate.element)
+          evidence.push({
+            kind: 'snapshot',
+            detail: bestSnapshotScore < 0.35
+              ? `Step ${step.order}: enriched generic accessibility snapshot labels with ${newElements.length} visible DOM target(s) for "${action.target}".`
+              : `Step ${step.order}: supplemented the snapshot match with ${newElements.length} visible DOM target(s), including frame-scoped locator evidence for "${action.target}".`,
+            source: browser.provenance ?? navigation.source,
+          })
         }
       }
       // Enterprise apps often finish an SSO redirect or client-side menu render

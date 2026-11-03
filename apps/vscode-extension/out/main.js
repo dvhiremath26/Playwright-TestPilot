@@ -287223,33 +287223,31 @@ async function gatherEvidenceForTestCase(browser, options) {
           action.kind === "click" && Boolean(action.intent),
           isSearchTarget(action.target)
         )[0]?.score ?? 0;
-        if (bestSnapshotScore < 0.35) {
-          const domElements = await inspectVisibleDomTargets(
-            browser,
-            action.target,
-            options.signal,
-            isSidebarNavigationStep(step.action)
-          );
-          if (domElements.length > 0) {
-            const afterInspection = await browser.capture(void 0, { signal: options.signal });
-            if (afterInspection) snapshot = afterInspection;
-            const existingRefs = new Set(snapshot.elements.map((element) => element.ref));
-            const newElements = domElements.filter((element) => !existingRefs.has(element.ref));
-            if (newElements.length > 0) {
-              snapshot = { ...snapshot, elements: [...snapshot.elements, ...newElements] };
-              compatibleTargets = findActionTargets(
-                snapshot,
-                action.target,
-                action.kind,
-                action.kind === "click" && Boolean(action.intent),
-                isSearchTarget(action.target)
-              ).map((candidate) => candidate.element);
-              evidence.push({
-                kind: "snapshot",
-                detail: `Step ${step.order}: enriched generic accessibility snapshot labels with ${newElements.length} visible DOM target(s) for "${action.target}".`,
-                source: browser.provenance ?? navigation.source
-              });
-            }
+        const domElements = await inspectVisibleDomTargets(
+          browser,
+          action.target,
+          options.signal,
+          isSidebarNavigationStep(step.action)
+        );
+        if (domElements.length > 0) {
+          const afterInspection = await browser.capture(void 0, { signal: options.signal });
+          if (afterInspection) snapshot = afterInspection;
+          const existingRefs = new Set(snapshot.elements.map((element) => element.ref));
+          const newElements = domElements.filter((element) => !existingRefs.has(element.ref));
+          if (newElements.length > 0) {
+            snapshot = { ...snapshot, elements: [...snapshot.elements, ...newElements] };
+            compatibleTargets = findActionTargets(
+              snapshot,
+              action.target,
+              action.kind,
+              action.kind === "click" && Boolean(action.intent),
+              isSearchTarget(action.target)
+            ).map((candidate) => candidate.element);
+            evidence.push({
+              kind: "snapshot",
+              detail: bestSnapshotScore < 0.35 ? `Step ${step.order}: enriched generic accessibility snapshot labels with ${newElements.length} visible DOM target(s) for "${action.target}".` : `Step ${step.order}: supplemented the snapshot match with ${newElements.length} visible DOM target(s), including frame-scoped locator evidence for "${action.target}".`,
+              source: browser.provenance ?? navigation.source
+            });
           }
         }
         if (compatibleTargets.length === 0) {

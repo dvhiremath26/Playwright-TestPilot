@@ -3315,33 +3315,35 @@ export function rewriteObservedFrameLocators(changes: FileChange[], candidates: 
         const currentExpression = extractLocatorExpressions(current)[0]
         if (!currentExpression) return line
         const normalizedCurrent = normalizeLocatorExpression(currentExpression)
-        if (normalizedCurrent.includes('frameLocator(') && observedFrameLocators.some((candidate) =>
-          normalizeLocatorExpression(candidate.expression) === normalizedCurrent,
-        )) return line
         const details = locatorCallDetails(currentExpression)
         if (!details || details.method === 'frameLocator') return line
         const leaf = normalizeLocatorExpression(`${details.method}(${details.args})`)
         const observed = frameCandidates.get(leaf)
-        let scopedExpression = observed?.size === 1 ? [...observed][0] : undefined
-        if (!scopedExpression) {
-          const generated = locatorRoleAndName(currentExpression)
-          if (!generated) return line
-          const unique = new Map<string, { expression: string; role: string; name: string }>()
-          for (const candidate of observedFrameLocators) {
-            unique.set(normalizeLocatorExpression(candidate.expression), candidate)
-          }
-          const ranked = [...unique.values()]
-            .filter((candidate) => candidate.role === generated.role)
-            .map((candidate) => ({
-              candidate,
-              score: textMatchScore(normalizeWords(candidate.name), normalizeWords(generated.name)),
-            }))
-            .filter((item) => item.score >= 0.8)
-            .sort((left, right) => right.score - left.score)
-          if (!ranked[0] || (ranked[1] && ranked[0].score - ranked[1].score < 0.15)) return line
-          scopedExpression = ranked[0].candidate.expression
+        const exact = observed?.size === 1 ? [...observed][0] : undefined
+        if (exact && normalizeLocatorExpression(exact) === normalizedCurrent) return line
+
+        const generated = locatorRoleAndName(currentExpression)
+        if (!generated) return line
+        const unique = new Map<string, { expression: string; role: string; name: string }>()
+        for (const candidate of observedFrameLocators) {
+          unique.set(normalizeLocatorExpression(candidate.expression), candidate)
         }
-        scopedExpression = scopedExpression.replace(/^(?:(?:this\.)?page\.)/, '')
+        const currentFrameScope = locatorFrameScope(currentExpression)
+        const ranked = [...unique.values()]
+          .filter((candidate) => candidate.role === generated.role)
+          .map((candidate) => {
+            const sameFrame = currentFrameScope !== undefined &&
+              normalizeLocatorExpression(locatorFrameScope(candidate.expression) ?? '') === normalizeLocatorExpression(currentFrameScope)
+            return {
+              candidate,
+              sameFrame,
+              score: textMatchScore(normalizeWords(candidate.name), normalizeWords(generated.name)),
+            }
+          })
+          .filter((item) => item.score >= 0.8)
+          .sort((left, right) => Number(right.sameFrame) - Number(left.sameFrame) || right.score - left.score)
+        if (!ranked[0] || (ranked[1] && ranked[0].sameFrame === ranked[1].sameFrame && ranked[0].score - ranked[1].score < 0.15)) return line
+        const scopedExpression = ranked[0].candidate.expression.replace(/^(?:(?:this\.)?page\.)/, '')
         return `${prefix}this.page.${scopedExpression}${suffix}`
       },
     )
@@ -3375,6 +3377,15 @@ function locatorRoleAndName(expression: string): { role: string; name: string } 
     return value.replace(/\\(['"\\])/g, '$1')
   }
   return { role: decode(match[1]!, match[2]!), name: decode(match[3]!, match[4]!) }
+}
+
+function locatorFrameScope(expression: string): string | undefined {
+  const details = locatorCallDetails(expression)
+  if (!details || details.method === 'frameLocator') return undefined
+  const lastCallIndex = expression.lastIndexOf(`.${details.method}(`)
+  if (lastCallIndex < 0) return undefined
+  const scope = expression.slice(0, lastCallIndex).trim()
+  return scope.includes('frameLocator(') ? scope : undefined
 }
 
 function matchingParen(source: string, opening: number): number {

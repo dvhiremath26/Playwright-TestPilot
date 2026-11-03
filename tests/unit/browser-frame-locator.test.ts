@@ -74,6 +74,21 @@ describe('rewriteObservedFrameLocators', () => {
     expect(rewritten).not.toContain('Continue Emphasized')
   })
 
+  it('corrects an altered accessible name when the generated frame scope is already correct', () => {
+    const input = locatorFile([
+      'export class CreateSalesOrderLocators {',
+      '  readonly CONTINUE = this.page.frameLocator(\'iframe[name="__container155-iframe"]\') .getByRole("button", { name: "Continue Emphasized" });',
+      '}',
+    ].join('\n'))
+    const candidates = [
+      observed('this.page.frameLocator(\'iframe[name="__container155-iframe"]\').getByRole("button", { name: "Continue", exact: true })', 'button', 'Continue', 5),
+    ]
+
+    const rewritten = rewriteObservedFrameLocators(input, candidates)[0]!.newContent!
+    expect(rewritten).toContain('frameLocator(\'iframe[name="__container155-iframe"]\').getByRole("button", { name: "Continue", exact: true })')
+    expect(rewritten).not.toContain('Continue Emphasized')
+  })
+
   it('removes an unused guessed iframe locator after observed controls have been rebound', () => {
     const input = locatorFile([
       'export class XLocators {',

@@ -3459,7 +3459,14 @@ export function parseGeneratedFiles(
     if (!rawPath) continue
 
     // Strip a leading label when the model wrote "path: filename" on its own line.
-    const cleanedPath = rawPath.replace(/\\/g, '/').replace(/^\/+/, '')
+    const cleanedPath = rawPath.trim()
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '')
+      // Some Copilot models combine the language and file path as
+      // ```typescript:tests/example.spec.ts; the language is fence metadata,
+      // not part of the repository path.
+      .replace(/^(?:(?:typescript|tsx|ts|javascript|jsx|js)\s*:\s*)/i, '')
+      .replace(/^file:\s*/i, '')
 
     const resolved = workspace.tryResolve(cleanedPath)
     if (!resolved) {

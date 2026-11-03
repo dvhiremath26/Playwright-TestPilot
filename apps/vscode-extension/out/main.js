@@ -289330,7 +289330,7 @@ function parseGeneratedFiles(text, repositoryRoot, options = {}) {
     if (bodyPath) content = content.slice(firstLine[0].length);
     const rawPath = headerPath ?? bodyPath ?? (options.defaultSpecPath && /\btest\s*\(/.test(content) ? options.defaultSpecPath : void 0);
     if (!rawPath) continue;
-    const cleanedPath = rawPath.replace(/\\/g, "/").replace(/^\/+/, "");
+    const cleanedPath = rawPath.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/^(?:(?:typescript|tsx|ts|javascript|jsx|js)\s*:\s*)/i, "").replace(/^file:\s*/i, "");
     const resolved = workspace2.tryResolve(cleanedPath);
     if (!resolved) {
       continue;

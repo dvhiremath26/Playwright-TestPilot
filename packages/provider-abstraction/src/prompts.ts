@@ -224,8 +224,8 @@ Preserve each case and its expected outcome. Decide whether to make one data-dri
 
 Target files:
 - Spec: ${ctx.targetSpecPath}
-- Page object: ${ctx.targetPagePath ?? '(derive from the test case title and framework conventions)'}
-- Locators: ${ctx.targetLocatorPath ?? '(derive from the page object and framework conventions)'}
+- Page objects: ${ctx.targetPagePath ?? '(use one screen-specific page class per distinct screen; reuse indexed classes when suitable)'}
+- Locators: ${ctx.targetLocatorPath ?? '(keep each screen locator class paired with its screen page class)'}
 - Test data: ${ctx.targetDataPath ?? '(only when non-secret test data is required)'}
 
 ${ctx.manualTestData ? `## Manual test data (required)

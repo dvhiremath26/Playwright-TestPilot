@@ -1994,9 +1994,6 @@ export async function generateChangesFromProvider(
     ? existingTestPath.replace(/\\/g, '/').replace(/^.*\//, '').replace(/\.spec\.ts$/, '')
     : safeStem
   const scenarioStem = deriveScenarioStem(options.task)
-  const pageName = scenarioStem.charAt(0).toUpperCase() + scenarioStem.slice(1)
-  const targetPagePath = `pages/${pageName}/${scenarioStem}.page.ts`
-  const targetLocatorPath = `pages/${pageName}/${scenarioStem}.locators.ts`
   const targetDataPath = `test-data/${scenarioStem}/${scenarioStem}.qa.json`
   const manualCases = options.task.testCases ?? (options.task.testCase ? [options.task.testCase] : [])
   const dataCases = manualCases.map((testCase) => ({
@@ -2017,7 +2014,6 @@ export async function generateChangesFromProvider(
         dataTypesPath: 'src/utils/testData/dataTypes.ts',
       }
     : undefined
-  const multiScreenFlow = requiresMultipleScreenPages(manualCases)
   const targetSpecPath = manualCases.length > 1
     ? `tests/${scenarioStem}.spec.ts`
     : existingTestPath ?? `tests/${stem}.spec.ts`
@@ -2029,14 +2025,29 @@ export async function generateChangesFromProvider(
       : [])),
   ].join('\n')
   const frameworkExamples = renderFrameworkExamples(options.analysis)
-  const sharedPageSources = [targetPagePath, targetLocatorPath].flatMap((path) => {
-    const absolute = join(options.repositoryRoot, path)
-    return existsSync(absolute)
-      ? [`EXISTING SHARED FILE ${path}\n\`\`\`typescript\n${readFileSync(absolute, 'utf-8').slice(0, 6000)}\n\`\`\``]
-      : []
+  const relevantLocatorPaths = options.analysis.reuse?.stepReuse
+    .flatMap((step) => step.candidateLocators.map((locator) => locator.file)) ?? []
+  const existingScreenPaths = [...new Set([
+    ...relevantLocatorPaths,
+    ...facts.locators.map((locator) => locator.file),
+  ])]
+    .filter((path) => /^pages\//i.test(path.replace(/\\/g, '/')))
+    .slice(0, 6)
+  const existingPageSources = existingScreenPaths.flatMap((sourcePath) => {
+    const normalizedPath = sourcePath.replace(/\\/g, '/')
+    const locatorAbsolute = join(options.repositoryRoot, normalizedPath)
+    if (!existsSync(locatorAbsolute)) return []
+    const pagePath = normalizedPath.replace(/\.locators\.tsx?$/i, '.page.ts')
+    const pageAbsolute = join(options.repositoryRoot, pagePath)
+    return [
+      ...(existsSync(pageAbsolute)
+        ? [`EXISTING SCREEN PAGE ${pagePath}\n\`\`\`typescript\n${readFileSync(pageAbsolute, 'utf-8').slice(0, 5000)}\n\`\`\``]
+        : []),
+      `EXISTING SCREEN LOCATORS ${normalizedPath}\n\`\`\`typescript\n${readFileSync(locatorAbsolute, 'utf-8').slice(0, 5000)}\n\`\`\``,
+    ]
   })
-  if (sharedPageSources.length > 0) {
-    frameworkExamples.text += `\n\n## Existing scenario files to reuse\n\n${sharedPageSources.join('\n\n')}`
+  if (existingPageSources.length > 0) {
+    frameworkExamples.text += `\n\n## Existing screen page objects and locator classes to reuse\n\n${existingPageSources.join('\n\n')}`
   }
 
   const messages: ChatMessage[] = [
@@ -2074,13 +2085,11 @@ export async function generateChangesFromProvider(
         approvalMode: config.approvalMode,
         approvedPlan: renderReuseCoverage(options.plan),
         targetSpecPath,
-        targetPagePath,
-        targetLocatorPath,
         targetDataPath,
         manualTestData,
         browserEvidence,
         frameworkExamples: frameworkExamples.text,
-      }) + renderScreenArchitectureRequirements(manualCases, targetPagePath, targetLocatorPath),
+      }) + renderScreenArchitectureRequirements(manualCases),
     },
   ]
 
@@ -2122,10 +2131,10 @@ export async function generateChangesFromProvider(
   const maxCorrections = 2
   const needsCorrection = (candidate: FileChange[]): boolean =>
     !hasSpec(candidate) || standardIssues(candidate).length > 0 ||
-    (!!manualTestData && manualDataUsageIssues(candidate, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow).length > 0)
+    (!!manualTestData && manualDataUsageIssues(candidate, manualTestData, frameworkExamples.dataLoaderImportPath).length > 0)
   for (let correction = 0; correction < maxCorrections && needsCorrection(changes); correction++) {
     const issues = standardIssues(changes)
-    const dataIssues = manualTestData ? manualDataUsageIssues(changes, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow) : []
+    const dataIssues = manualTestData ? manualDataUsageIssues(changes, manualTestData, frameworkExamples.dataLoaderImportPath) : []
     const failedStepOrders = new Set(issues.flatMap((issue) => {
       const order = issue.match(/manual step\s+(\d+)/i)?.[1]
       return order ? [Number(order)] : []
@@ -2145,7 +2154,7 @@ export async function generateChangesFromProvider(
       'Return the complete file set again. Implement every manual step in order; the generated code does not need to repeat the manual wording verbatim. Correct every listed standards violation and copy the architecture from the real source examples where needed. For new page behavior, create page-object/locator code using matching browser observations; never invent a selector that is absent from evidence. Every new locator expression must exactly match an expression in the Playwright CLI observations or an indexed framework locator. For data-driven text assertions, a locator-class method may accept the expected value and use getByText(expectedValue) only when a literal getByText candidate for that assertion is present in the matching snapshot evidence; pass the value from the data row. If evidence is insufficient, do not invent a locator or leave a guessed CSS selector with an adjustment comment; keep the specific step unresolved and explain which live snapshot is missing.',
         'Page methods must never call this.page.getByRole(...), this.page.frameLocator(...), this.page.locator(...), or this.page.goto(...). Put the observed locator in the paired locator class, then call the confirmed framework wrapper: await this.actions.fill(this.locators.FIELD, value), await this.actions.click(this.locators.FIELD), and await this.actions.browser.navigate(url). For an element observed inside an iframe, preserve its complete frame-scoped locator chain exactly (for example this.page.frameLocator(observedFrameSelector).getByRole(...)); never drop the frame scope or treat the control as belonging to the main page. Match the target framework examples and do not use raw Playwright interactions inside a page object.',
       'Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.',
-      renderScreenArchitectureRequirements(manualCases, targetPagePath, targetLocatorPath),
+      renderScreenArchitectureRequirements(manualCases),
       'Output only fenced TypeScript file blocks with repository-relative paths, including a tests/*.spec.ts file.',
     ].filter(Boolean).join('\n\n')
     response = await provider.chat([
@@ -2172,18 +2181,14 @@ export async function generateChangesFromProvider(
     )
   }
   if (manualTestData) {
-    let dataUseIssues = manualDataUsageIssues(changes, manualTestData, options.repositoryRoot, targetPagePath, targetLocatorPath, frameworkExamples.dataLoaderImportPath, multiScreenFlow)
+    let dataUseIssues = manualDataUsageIssues(changes, manualTestData, frameworkExamples.dataLoaderImportPath)
     let usedDirectJsonFallback = false
     if (dataUseIssues.length > 0 && supportsJsonModuleImports(options.repositoryRoot)) {
       const directJsonChanges = applyDirectJsonDataFallback(changes, manualTestData)
       const directJsonIssues = manualDataUsageIssues(
         directJsonChanges,
         manualTestData,
-        options.repositoryRoot,
-        targetPagePath,
-        targetLocatorPath,
         frameworkExamples.dataLoaderImportPath,
-        multiScreenFlow,
         'direct-json',
       )
       if (directJsonIssues.length === 0) {
@@ -2195,22 +2200,16 @@ export async function generateChangesFromProvider(
     if (dataUseIssues.length > 0) {
       throw new Error(`The selected Copilot model did not wire the extracted manual test data after two automatic correction attempts. No files were written:\n${dataUseIssues.map((issue) => `- ${issue}`).join('\n')}`)
     }
-    // Page/locator files are scenario-level assets. Once present, keep the existing
-    // implementation and have each title-specific spec consume a separate data row.
+    // Page objects are screen-level assets. Reuse paths selected from the framework
+    // index; test data remains scenario-scoped and is merged by its own builder.
     changes = changes.filter((change) =>
-      !([targetPagePath, targetLocatorPath].includes(change.path) &&
-        existsSync(join(options.repositoryRoot, change.path))) &&
       change.path !== targetDataPath &&
       change.path !== 'src/utils/testData/dataTypes.ts',
     )
     changes.push(...buildManualDataChanges(options.repositoryRoot, targetDataPath, manualTestData)
       .filter((change) => !usedDirectJsonFallback || change.path !== 'src/utils/testData/dataTypes.ts'))
   } else {
-    // Preserve shared page-object paths even when this test case has no inline data.
-    changes = changes.filter((change) =>
-      !([targetPagePath, targetLocatorPath].includes(change.path) &&
-        existsSync(join(options.repositoryRoot, change.path))),
-    )
+    // Keep model-proposed updates to existing screen page objects reviewable.
   }
   return changes.map((change) => ({
     ...change,
@@ -2283,9 +2282,9 @@ function requiresMultipleScreenPages(cases: TestCase[]): boolean {
   })
 }
 
-function renderScreenArchitectureRequirements(cases: TestCase[], targetPagePath: string, targetLocatorPath: string): string {
-  if (!requiresMultipleScreenPages(cases)) return ''
-  return `\n\n## Screen-based page-object architecture\n\nAnalyze the manual steps and step-scoped Playwright CLI snapshots to identify the actual screens and transitions. You are responsible for choosing accurate, descriptive page and locator class names and repository-relative paths from that evidence; do not use fixed page names supplied by TestPilot, and never name a page after a control or action such as ContinueButton. Create a separate framework-standard page class and paired locator class for each distinct screen, assign each action to the screen where it occurs, and have the spec call those page objects in flow order. The scenario's primary workflow page may use the stable shared paths ${targetPagePath} and ${targetLocatorPath}; name every additional screen page from its observed screen purpose and manual-step context. Keep multiple cases that share the same screens/actions on the same page and locator classes. Every page class must extend BasePage, delegate interactions through the discovered action facade, and have a matching *Locators class. The spec must import and use every page class. Use observed or indexed locators only.\n`
+function renderScreenArchitectureRequirements(cases: TestCase[]): string {
+  if (cases.length === 0) return ''
+  return `\n\n## Screen-based page-object architecture (mandatory)\n\nAnalyze the manual steps and step-scoped browser snapshots to identify each distinct application screen/page. Put each screen's reusable page class and paired locator class in its own screen folder: pages/<ScreenName>/<screenName>.page.ts and pages/<ScreenName>/<screenName>.locators.ts (for example pages/LoginPage/login.page.ts and pages/HomePage/home.locators.ts). Use meaningful screen-based class/file names; the folder may follow the existing framework's screen-folder convention. Never put different screens' classes together in one scenario/test-case folder, and never name a page after a control or action such as ContinueButton. Before creating a pair, search the indexed framework page objects and locator classes; import and reuse an existing screen pair when its screen and behavior match, extending it only when needed. Create a new pair only for a screen with no suitable existing page object. Assign each action to the screen where it occurs and have the spec call the respective page objects in flow order. Keep cases that share screens/actions on the same screen page objects. The spec must import and instantiate every page class it uses. Every page class must extend BasePage, delegate interactions through the discovered action facade, and import its matching *Locators class. Use observed or indexed locators only.\n`
 }
 
 function findScreenPageArchitectureIssues(
@@ -2298,6 +2297,7 @@ function findScreenPageArchitectureIssues(
   const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, '/')}`))
   const specSource = specs.map((spec) => spec.newContent ?? '').join('\n')
   const generatedPageClasses = new Set<string>()
+  const generatedPageFolders = new Set<string>()
   const pageImports = [...specSource.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]@pages\/([^'"]+\.page(?:\.tsx?)?)['"]/g)]
     .flatMap((match) => {
       const importPath = match[2]!
@@ -2306,6 +2306,12 @@ function findScreenPageArchitectureIssues(
         .map((className) => ({ className, relativePath }))
     })
   for (const { className, relativePath: pagePath } of pageImports) {
+    const normalizedPagePath = pagePath.replace(/\\/g, '/')
+    const pageFolder = normalizedPagePath.split('/')[1]
+    if (!pageFolder || !normalizedPagePath.startsWith('pages/')) {
+      issues.push(`${pagePath} must be stored under a dedicated pages/<ScreenName>/ folder.`)
+    }
+    if (pageFolder) generatedPageFolders.add(pageFolder)
     const generatedPage = changes.find((change) => change.path === pagePath)
     const source = generatedPage?.newContent ?? (existsSync(join(repositoryRoot, pagePath))
       ? readFileSync(join(repositoryRoot, pagePath), 'utf-8')
@@ -2335,6 +2341,9 @@ function findScreenPageArchitectureIssues(
   }
   if (generatedPageClasses.size < 2) {
     issues.push('This flow crosses screens, but only one page class was generated. Create separate page/locator pairs for the screens, naming each from the manual steps and snapshot evidence.')
+  }
+  if (generatedPageFolders.size < 2) {
+    issues.push('This flow crosses screens, but its page classes are not separated into screen-specific folders. Use one pages/<ScreenName>/ folder per screen.')
   }
   return issues
 }
@@ -2523,11 +2532,7 @@ export function rewriteHardcodedManualData(changes: FileChange[], data: Extracte
 function manualDataUsageIssues(
   changes: FileChange[],
   data: ExtractedManualData,
-  repositoryRoot: string,
-  targetPagePath: string,
-  targetLocatorPath: string,
   expectedDataLoaderImportPath?: string,
-  multiScreenFlow = false,
   accessMode: 'data-loader' | 'direct-json' = 'data-loader',
 ): string[] {
   const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, '/')}`))
@@ -2535,14 +2540,9 @@ function manualDataUsageIssues(
   const issues: string[] = []
   const modulePattern = new RegExp(`DataLoader\\.get\\(\\s*['"]${data.moduleName}['"]\\s*\\)`)
   const jsonImportName = `${data.moduleName}Json`
-  const pageName = data.moduleName.charAt(0).toUpperCase() + data.moduleName.slice(1)
-  const pageImport = `@pages/${pageName}/${data.moduleName}.page`
   for (const spec of specs) {
     const source = spec.newContent ?? ''
     const dataLoaderImport = source.match(/import\s+\{\s*DataLoader\s*\}\s+from\s+['"]([^'"]+)['"]/)
-    if (data.sharedFlow && !source.includes(`from '${pageImport}'`) && !source.includes(`from "${pageImport}"`)) {
-      issues.push(`${spec.path} must import the shared scenario page object from '${pageImport}'.`)
-    }
     const jsonImport = source.match(new RegExp(`import\\s+${escapeRegExp(jsonImportName)}\\s+from\\s+['"]([^'"]+)['"]`))
     if (accessMode === 'data-loader' && expectedDataLoaderImportPath && dataLoaderImport?.[1] !== expectedDataLoaderImportPath) {
       issues.push(`${spec.path} must import DataLoader from '${expectedDataLoaderImportPath}' to match the target framework.`)
@@ -2612,19 +2612,6 @@ function manualDataUsageIssues(
       }
       if (value.length >= 3 && containsQuotedStringLiteral(generatedCode, value)) {
         issues.push(`Generated TypeScript hardcodes '${value}' instead of reading it from the test-data JSON.`)
-      }
-    }
-  }
-  if (data.sharedFlow) {
-    for (const target of [targetPagePath, targetLocatorPath]) {
-      const presentOnDisk = existsSync(join(repositoryRoot, target))
-      const presentInProposal = changes.some((change) => change.path === target && !!change.newContent)
-      if (!presentOnDisk && !presentInProposal) issues.push(`The shared scenario file '${target}' is missing; return it at this exact path.`)
-    }
-    for (const change of changes) {
-      if (!multiScreenFlow && /^pages\/.+\.(?:page|locators)\.tsx?$/.test(change.path) &&
-          change.path !== targetPagePath && change.path !== targetLocatorPath) {
-        issues.push(`${change.path} duplicates scenario assets for a shared flow; use shared paths '${targetPagePath}' and '${targetLocatorPath}'.`)
       }
     }
   }

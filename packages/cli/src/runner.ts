@@ -92,6 +92,13 @@ class SnapshotTargetUnavailableError extends Error {
   }
 }
 
+class BrowserSnapshotUnavailableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BrowserSnapshotUnavailableError'
+  }
+}
+
 /** The stages, in execution order; later stages are separate user-approved commands. */
 const STAGE_SEQUENCE: AgentStage[] = [
   'Understand',
@@ -526,11 +533,21 @@ export async function gatherEvidenceForTestCase(
       let polls = 0
       let openedCollapsedSearch = false
       let mfaNoticeSent = false
+      let failedSnapshotCaptures = 0
       let lastObservedControls: string[] = []
       let lastObservedPage = ''
       while (Date.now() < deadline) {
         if (options.signal?.aborted) throw new Error('Browser step replay was cancelled.')
         const refreshed = await browser.capture(undefined, { signal: options.signal })
+        if (!refreshed) {
+          failedSnapshotCaptures++
+          if (failedSnapshotCaptures >= 2) {
+            const backend = browser.provenance?.backendLabel ?? 'active browser backend'
+            throw new BrowserSnapshotUnavailableError(`${backend} failed to return consecutive snapshots while waiting for "${targetDescription ?? 'the requested page element'}" after step ${step.order}.`)
+          }
+        } else {
+          failedSnapshotCaptures = 0
+        }
         if (refreshed) {
           snapshot = refreshed
           const pageUrl = refreshed.raw.match(/(?:Page URL|URL):\s*(https?:\/\/[^\s]+)/i)?.[1]
@@ -859,8 +876,9 @@ export async function gatherEvidenceForTestCase(
     }
   }
   } catch (error) {
-    if (error instanceof SnapshotTargetUnavailableError && !options.fallbackRetry) {
-      if (browser.activateFallback(`Playwright CLI could not confidently map a manual step: ${error.message}`)) {
+    if ((error instanceof SnapshotTargetUnavailableError || error instanceof BrowserSnapshotUnavailableError) && !options.fallbackRetry) {
+      if (browser.activateFallback(`The primary browser backend could not provide usable evidence: ${error.message}`)) {
+        options.onStatus?.(`The primary browser backend could not provide usable evidence. Restarting the isolated manual flow with Playwright MCP to inspect the application state.`)
         return gatherEvidenceForTestCase(browser, { ...options, fallbackRetry: true })
       }
       throw new Error(`${error.message} Playwright MCP fallback is unavailable.`)
@@ -872,7 +890,7 @@ export async function gatherEvidenceForTestCase(
 
   async function captureScreen(label: string, pageUrl: string) {
     const observed = await browser.capture(undefined, { signal: options.signal })
-    if (!observed) throw new Error(`The browser could not capture a snapshot for ${label}.`)
+    if (!observed) throw new BrowserSnapshotUnavailableError(`The active browser backend could not capture a snapshot for ${label}.`)
     const source = browser.provenance ?? navigation.source
     const elements = observed.elements
       .slice(0, 40)

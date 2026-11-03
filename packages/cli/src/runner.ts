@@ -1125,7 +1125,7 @@ async function inspectVisibleDomTargets(
   // The old page.evaluate path below is limited to the main document and would miss
   // the common SAP/Fiori case where the shell is visible but the active form is framed.
   const frameInspection = await browser.runCode(`async page => {
-    const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSF';
+    const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-input,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSFF,.sapMSF,.sapMSearchField';
     const results = [];
     const frames = page.frames();
     for (const frame of frames.slice(1, 41)) {
@@ -1179,8 +1179,9 @@ async function inspectVisibleDomTargets(
           const tag = el.tagName.toLowerCase();
           const explicitRole = el.getAttribute('role');
           const classes = typeof el.className === 'string' ? el.className : '';
-          const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : '';
-          const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || /sapMSFI|sapMSF/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
+          const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : (el.getAttribute('type') || '').toLowerCase();
+          const searchField = inputType === 'search' || /sapMSFI|sapMSFF|sapMSF|sapMSearchField|ui5-search/i.test(classes + ' ' + tag) || Boolean(el.closest('.sapMSF,.sapMSearchField,ui5-search,[data-search-field="true"]'));
+          const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' || tag === 'ui5-input' ? 'textbox' : el.isContentEditable ? 'textbox' : 'generic');
           const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
           const control = core && el.id ? core.byId(el.id) : undefined;
           const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
@@ -1195,7 +1196,7 @@ async function inspectVisibleDomTargets(
           const ui5Name = ['getAccessibleName','getAriaLabel','getPlaceholder','getTooltip','getTitle','getText'].map(method => {
             try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
           }).find(value => typeof value === 'string' && value.trim()) || '';
-          const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || (searchButton ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+          const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
           const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
           const id = el.id || '';
           const helpId = el.getAttribute('data-help-id') || '';
@@ -1219,7 +1220,7 @@ async function inspectVisibleDomTargets(
 
   const inspected = await browser.execute(
     (tool, callOptions) => tool.eval(`() => {
-      const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSF';
+      const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-input,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSFF,.sapMSF,.sapMSearchField';
       const allowUnnamedSearch = ${isSearchTarget(requestedTarget)};
       const roots = [document];
       for (let index = 0; index < roots.length && index < 40; index++) {
@@ -1242,8 +1243,9 @@ async function inspectVisibleDomTargets(
         const tag = el.tagName.toLowerCase();
         const explicitRole = el.getAttribute('role');
         const classes = typeof el.className === 'string' ? el.className : '';
-        const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : '';
-        const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || /sapMSFI|sapMSF/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' ? (inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : 'textbox') : el.isContentEditable ? 'textbox' : 'generic');
+        const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : (el.getAttribute('type') || '').toLowerCase();
+        const searchField = inputType === 'search' || /sapMSFI|sapMSFF|sapMSF|sapMSearchField|ui5-search/i.test(classes + ' ' + tag) || Boolean(el.closest('.sapMSF,.sapMSearchField,ui5-search,[data-search-field="true"]'));
+        const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' || tag === 'ui5-input' ? 'textbox' : el.isContentEditable ? 'textbox' : 'generic');
         const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
         const control = core && el.id ? core.byId(el.id) : undefined;
         const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
@@ -1259,7 +1261,7 @@ async function inspectVisibleDomTargets(
           return label ? (label.innerText || label.textContent || '') : '';
         }).join(' ').trim();
         const associatedLabels = el.labels ? Array.from(el.labels).map((label) => label.innerText || label.textContent || '').join(' ') : '';
-        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || (searchButton ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
         const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
         const parentTexts = [el.parentElement, el.parentElement && el.parentElement.parentElement].filter(Boolean).map((parent) => (parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean);
         const context = [...new Set([parentTexts[0], parentTexts[1], controlType].filter(Boolean))].join(' | ').slice(0, 180);

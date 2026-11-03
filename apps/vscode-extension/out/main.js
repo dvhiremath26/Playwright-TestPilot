@@ -288998,7 +288998,7 @@ function findFrameworkStandardIssues(changes, examples, customFixtureUsed, appro
     for (const match of locatorCalls) {
       const expression = match.expression.replace(/^this\.page\./, "");
       const normalizedExpression = normalizeLocatorExpression(expression);
-      const locatorIsObserved = allowed.has(normalizedExpression) || [...allowed].some((observed) => observed.startsWith(`${normalizedExpression}.`));
+      const locatorIsObserved = isObservedLocatorExpression(normalizedExpression, allowed) || [...allowed].some((observed) => observed.startsWith(`${normalizedExpression}.`));
       if (!locatorIsObserved) {
         const callIndex = match.index;
         const method = stringParameterMethods.find(
@@ -289014,6 +289014,14 @@ function findFrameworkStandardIssues(changes, examples, customFixtureUsed, appro
     }
   }
   return [...new Set(issues)];
+}
+function isObservedLocatorExpression(expression, allowed) {
+  if (allowed.has(expression) || [...allowed].some((observed) => observed.startsWith(`${expression}.`))) return true;
+  if (!expression.includes("frameLocator(")) return false;
+  const details = locatorCallDetails(expression);
+  if (!details || details.method === "frameLocator") return false;
+  const observedLeaf = normalizeLocatorExpression(`${details.method}(${details.args})`);
+  return allowed.has(observedLeaf);
 }
 function normalizeLocatorExpression(expression) {
   const source = expression.trim().replace(/;\s*$/, "").replace(/^(?:(?:this\.)?page\.)/, "").replace(/locator\(([^()]*)\)\s*\.\s*contentFrame\s*\(\s*\)/g, "frameLocator($1)");
@@ -289209,22 +289217,23 @@ function extractLocatorExpressions(source) {
 }
 function rewriteObservedFrameLocators(changes, candidates) {
   const frameCandidates = /* @__PURE__ */ new Map();
-  const observedFrameLocators = [];
+  const observedControlLocators = [];
   for (const candidate of candidates) {
     const expression = extractLocatorExpressions(candidate.expression)[0];
     if (!expression) continue;
     const normalized = normalizeLocatorExpression(expression);
-    if (!normalized.includes("frameLocator(")) continue;
     const details = locatorCallDetails(expression);
     if (!details || details.method === "frameLocator") continue;
+    const metadata = candidate.role && candidate.name ? { role: candidate.role, name: candidate.name } : locatorRoleAndName(expression);
+    if (!metadata) continue;
+    observedControlLocators.push({ expression, ...metadata });
+    if (!normalized.includes("frameLocator(")) continue;
     const leaf = normalizeLocatorExpression(`${details.method}(${details.args})`);
     const matches = frameCandidates.get(leaf) ?? /* @__PURE__ */ new Set();
     matches.add(expression);
     frameCandidates.set(leaf, matches);
-    const metadata = candidate.role && candidate.name ? { role: candidate.role, name: candidate.name } : locatorRoleAndName(expression);
-    if (metadata) observedFrameLocators.push({ expression, ...metadata });
   }
-  if (frameCandidates.size === 0 && observedFrameLocators.length === 0) return changes;
+  if (observedControlLocators.length === 0) return changes;
   return changes.map((change) => {
     if (!/\.locators\.tsx?$/i.test(change.path) || !change.newContent) return change;
     let source = change.newContent.replace(
@@ -289235,6 +289244,7 @@ function rewriteObservedFrameLocators(changes, candidates) {
         const normalizedCurrent = normalizeLocatorExpression(currentExpression);
         const details = locatorCallDetails(currentExpression);
         if (!details || details.method === "frameLocator") return line;
+        const currentFrameScope = locatorFrameScope(currentExpression);
         const leaf = normalizeLocatorExpression(`${details.method}(${details.args})`);
         const observed = frameCandidates.get(leaf);
         const exact = observed?.size === 1 ? [...observed][0] : void 0;
@@ -289242,20 +289252,31 @@ function rewriteObservedFrameLocators(changes, candidates) {
         const generated = locatorRoleAndName(currentExpression);
         if (!generated) return line;
         const unique = /* @__PURE__ */ new Map();
-        for (const candidate of observedFrameLocators) {
+        for (const candidate of observedControlLocators) {
           unique.set(normalizeLocatorExpression(candidate.expression), candidate);
         }
-        const currentFrameScope = locatorFrameScope(currentExpression);
         const ranked = [...unique.values()].filter((candidate) => candidate.role === generated.role).map((candidate) => {
-          const sameFrame = currentFrameScope !== void 0 && normalizeLocatorExpression(locatorFrameScope(candidate.expression) ?? "") === normalizeLocatorExpression(currentFrameScope);
+          const candidateFrameScope = locatorFrameScope(candidate.expression);
+          const sameFrame = currentFrameScope !== void 0 && candidateFrameScope !== void 0 && normalizeLocatorExpression(candidateFrameScope) === normalizeLocatorExpression(currentFrameScope);
+          const unscopedControl = candidateFrameScope === void 0;
           return {
             candidate,
             sameFrame,
+            unscopedControl,
             score: textMatchScore(normalizeWords(candidate.name), normalizeWords(generated.name))
           };
-        }).filter((item) => item.score >= 0.8).sort((left, right) => Number(right.sameFrame) - Number(left.sameFrame) || right.score - left.score);
-        if (!ranked[0] || ranked[1] && ranked[0].sameFrame === ranked[1].sameFrame && ranked[0].score - ranked[1].score < 0.15) return line;
-        const scopedExpression = ranked[0].candidate.expression.replace(/^(?:(?:this\.)?page\.)/, "");
+        }).filter((item) => item.score >= 0.8).sort(
+          (left, right) => Number(right.sameFrame) - Number(left.sameFrame) || Number(right.unscopedControl) - Number(left.unscopedControl) || right.score - left.score
+        );
+        if (!ranked[0] || ranked[1] && ranked[0].sameFrame === ranked[1].sameFrame && ranked[0].unscopedControl === ranked[1].unscopedControl && ranked[0].score - ranked[1].score < 0.15) return line;
+        const selected = ranked[0];
+        let scopedExpression;
+        if (selected.sameFrame || !selected.unscopedControl || !currentFrameScope) {
+          scopedExpression = selected.candidate.expression.replace(/^(?:(?:this\.)?page\.)/, "");
+        } else {
+          const observedLeaf = selected.candidate.expression.replace(/^(?:(?:this\.)?page\.)/, "");
+          scopedExpression = `${currentFrameScope}.${observedLeaf}`.replace(/^(?:(?:this\.)?page\.)/, "");
+        }
         return `${prefix}this.page.${scopedExpression}${suffix}`;
       }
     );

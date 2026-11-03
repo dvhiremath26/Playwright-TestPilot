@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { rewriteObservedFrameLocators } from '../../packages/cli/src/runner'
+import { isObservedLocatorExpression, rewriteObservedFrameLocators } from '../../packages/cli/src/runner'
 import type { FileChange, VerifiedLocator } from '../../packages/shared-types/src/agent'
 
 const observedAt = '2026-11-03T00:00:00.000Z'
@@ -119,6 +119,26 @@ describe('rewriteObservedFrameLocators', () => {
     const rewritten = rewriteObservedFrameLocators(input, candidates)[0]!.newContent!
     expect(rewritten).toContain('frameLocator(\'iframe[name="__container155-iframe"]\').getByRole("button", { name: "Continue", exact: true })')
     expect(rewritten).not.toContain('login-frame')
+  })
+
+  it('keeps the generated iframe wrapper when only the child control was observed', () => {
+    const input = locatorFile([
+      'export class CreateSalesOrderLocators {',
+      '  readonly CONTINUE = this.page.locator(\'iframe[name="__container159-iframe"]\') .contentFrame() .getByRole("button", { name: "Continue Emphasized" });',
+      '}',
+    ].join('\n'))
+    const candidates = [
+      observed('this.page.getByRole("button", { name: "Continue", exact: true })', 'button', 'Continue', 14),
+    ]
+
+    const rewritten = rewriteObservedFrameLocators(input, candidates)[0]!.newContent!
+    const observedScopedControl = 'locator(\'iframe[name="__container159-iframe"]\') .contentFrame().getByRole("button", { name: "Continue", exact: true })'
+    expect(rewritten).toContain(observedScopedControl)
+    expect(rewritten).not.toContain('Continue Emphasized')
+    expect(isObservedLocatorExpression(
+      'frameLocator("iframe[name=\\"__container159-iframe\\"]").getByRole("button", { name: "Continue", exact: true })',
+      new Set(['getByRole("button",{name:"Continue",exact:true})']),
+    )).toBe(true)
   })
 
   it('removes an unused guessed iframe locator after observed controls have been rebound', () => {

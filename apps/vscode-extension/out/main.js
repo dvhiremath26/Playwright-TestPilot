@@ -287095,11 +287095,20 @@ async function gatherEvidenceForTestCase(browser, options) {
         let openedCollapsedSearch = false;
         let mfaNoticeSent = false;
         let lastObservedControls = [];
+        let lastObservedPage = "";
         while (Date.now() < deadline) {
           if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
           const refreshed = await browser.capture(void 0, { signal: options.signal });
           if (refreshed) {
             snapshot = refreshed;
+            const pageUrl = refreshed.raw.match(/(?:Page URL|URL):\s*(https?:\/\/[^\s]+)/i)?.[1];
+            if (pageUrl) {
+              try {
+                const safeUrl = new URL(pageUrl);
+                lastObservedPage = `${safeUrl.origin}${safeUrl.pathname}`;
+              } catch {
+              }
+            }
             if (!mfaNoticeSent && isMfaChallenge(snapshot)) {
               mfaNoticeSent = true;
               options.onStatus?.("PingID or another MFA prompt detected. Approve the sign-in on your registered device; TestPilot will wait up to 60 seconds for the next page control.");
@@ -287157,7 +287166,9 @@ async function gatherEvidenceForTestCase(browser, options) {
             return gatherEvidenceForTestCase(browser, { ...options, fallbackRetry: true });
           }
           const observed = lastObservedControls.length > 0 ? ` Latest visible controls: ${lastObservedControls.join("; ")}.` : " No named visible controls were exposed.";
-          throw new Error(`Step ${step.order} timed out waiting for ${targetDescription ? `the next step target "${targetDescription}"` : `"${manualWaitTarget(step.action) ?? "the requested page element"}"`} in fresh accessibility snapshots and visible DOM controls.${observed} No later screen evidence was collected.`);
+          const pageContext = lastObservedPage ? ` Last observed page: ${lastObservedPage}.` : "";
+          const authenticationContext = mfaNoticeSent ? " An MFA prompt was detected; approve the request and complete any number challenge in the headed browser before retrying." : "";
+          throw new Error(`Step ${step.order} timed out waiting for ${targetDescription ? `the next step target "${targetDescription}"` : `"${manualWaitTarget(step.action) ?? "the requested page element"}"`} in fresh accessibility snapshots and visible DOM controls.${observed}${pageContext}${authenticationContext} No later screen evidence was collected.`);
         }
         evidence.push({
           kind: "snapshot",
@@ -287573,8 +287584,7 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const control = core && el.id ? core.byId(el.id) : undefined;
           const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
           let icon = ''; try { icon = control && typeof control.getIcon === 'function' ? control.getIcon() || '' : ''; } catch {}
-          const shellSearch = /ushell|shell/i.test(controlType) || Boolean(el.closest('.sapUshellShellHead,.sapUshellShellHeader,.sapUshellShell,.sapUshellShellSearch,[id*="shell"]'));
-          const searchButton = role === 'button' && /search/i.test(icon) && shellSearch && Boolean(el.id && idCounts.get(el.id) === 1);
+          const searchButton = role === 'button' && /search/i.test(icon) && Boolean(el.id && idCounts.get(el.id) === 1);
           const labels = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map(id => {
             const root = el.getRootNode(); const label = root.getElementById ? root.getElementById(id) : el.ownerDocument.getElementById(id);
             return label ? (label.innerText || label.textContent || '') : '';
@@ -287635,8 +287645,7 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
         const control = core && el.id ? core.byId(el.id) : undefined;
         const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
         let icon = ''; try { icon = control && typeof control.getIcon === 'function' ? control.getIcon() || '' : ''; } catch {}
-        const shellSearch = /ushell|shell/i.test(controlType) || Boolean(el.closest('.sapUshellShellHead,.sapUshellShellHeader,.sapUshellShell,.sapUshellShellSearch,[id*="shell"]'));
-        const searchButton = role === 'button' && /search/i.test(icon) && shellSearch && Boolean(el.id && idCounts.get(el.id) === 1);
+        const searchButton = role === 'button' && /search/i.test(icon) && Boolean(el.id && idCounts.get(el.id) === 1);
         const ui5Labels = ['getText', 'getTitle', 'getTooltip', 'getAccessibleName', 'getAriaLabel', 'getHeaderText', 'getLabel', 'getPlaceholder'].map((method) => {
           try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
         }).filter((value) => typeof value === 'string' && value.trim());

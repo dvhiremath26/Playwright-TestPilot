@@ -288241,7 +288241,7 @@ ${existingPageSources.join("\n\n")}`;
   const messages = [
     {
       role: "system",
-      content: 'You emit file content only. Emit nothing but the files requested, each as a fenced block tagged with its path. The target framework conventions are mandatory. Follow the included real source examples and never substitute generic Playwright patterns for the framework architecture. Never use test.only or invent a fixture, action method, or helper API that was not discovered. Locator fields must be Playwright Locator objects, not strings containing locator code. Every locator must exactly match a Playwright CLI snapshot observation or an indexed framework locator; comments such as "adjust this selector" are not acceptable evidence. If a snapshot locator is scoped to an iframe, preserve the entire frameLocator/contentFrame chain in the paired locator class and page actions; do not strip the frame scope. Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.'
+      content: 'You emit file content only. Emit nothing but the files requested, each as a fenced block tagged with its path. The target framework conventions are mandatory. Follow the included real source examples and never substitute generic Playwright patterns for the framework architecture. Never use test.only or invent a fixture, action method, or helper API that was not discovered. Locator fields must be Playwright Locator objects, not strings containing locator code. Every locator must exactly match a Playwright CLI snapshot observation or an indexed framework locator; comments such as "adjust this selector" are not acceptable evidence. If a snapshot locator is scoped to an iframe, preserve the entire frameLocator/contentFrame chain in the paired locator class and page actions; do not strip the frame scope. Use an iframe scope only when that exact full frameLocator/contentFrame locator expression appears in browser evidence or in a relevant indexed locator supplied for this screen. Observing a role/name by itself does not authorize adding frameLocator(...). Never create framed and unframed variants of the same control. Reuse matching indexed locator fields and their paired page objects; do not redeclare a matching control in a new locator class when a relevant existing locator is supplied. Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.'
     },
     {
       role: "user",
@@ -288286,8 +288286,23 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
     ...(options.task.browserLocatorCandidates ?? []).map((candidate) => candidate.expression),
     ...options.plan.flatMap((entry) => entry.verifiedLocator ? [entry.verifiedLocator.expression] : [])
   ];
+  const relevantIndexedLocators = options.analysis.reuse?.stepReuse.flatMap((step) => step.candidateLocators).filter((locator, index, all) => all.findIndex(
+    (candidate) => candidate.file === locator.file && candidate.name === locator.name
+  ) === index) ?? [];
+  const approvedFrameLocatorExpressions = [
+    ...(options.task.browserLocatorCandidates ?? []).map((candidate) => candidate.expression),
+    ...options.plan.flatMap((entry) => entry.verifiedLocator ? [entry.verifiedLocator.expression] : []),
+    ...relevantIndexedLocators.map((locator) => locator.expression)
+  ];
   const standardIssues = (changes2) => [
-    ...findFrameworkStandardIssues(changes2, frameworkExamples, facts.customFixtureUsed, approvedLocatorExpressions),
+    ...findFrameworkStandardIssues(
+      changes2,
+      frameworkExamples,
+      facts.customFixtureUsed,
+      approvedLocatorExpressions,
+      approvedFrameLocatorExpressions,
+      relevantIndexedLocators
+    ),
     ...findAssertionLocatorIssues(changes2, manualCases, options.task.browserLocatorCandidates ?? []),
     ...findManualNavigationIssues(changes2, manualCases),
     ...findManualStepCoverageIssues(changes2, manualCases),
@@ -288325,8 +288340,8 @@ ${issues.map((issue) => `- ${issue}`).join("\n")}`] : [],
       locatorCorrectionGuidance,
       ...dataIssues.length > 0 ? [`It failed to use the extracted test data:
 ${dataIssues.map((issue) => `- ${issue}`).join("\n")}`] : [],
-      "Return the complete file set again. Implement every manual step in order; the generated code does not need to repeat the manual wording verbatim. Correct every listed standards violation and copy the architecture from the real source examples where needed. For new page behavior, create page-object/locator code using matching browser observations; never invent a selector that is absent from evidence. Every new locator expression must exactly match an expression in the Playwright CLI observations or an indexed framework locator. For data-driven text assertions, a locator-class method may accept the expected value and use getByText(expectedValue) only when a literal getByText candidate for that assertion is present in the matching snapshot evidence; pass the value from the data row. If evidence is insufficient, do not invent a locator or leave a guessed CSS selector with an adjustment comment; keep the specific step unresolved and explain which live snapshot is missing.",
-      "Page methods must never call this.page.getByRole(...), this.page.frameLocator(...), this.page.locator(...), or this.page.goto(...). Put the observed locator in the paired locator class, then call the confirmed framework wrapper: await this.actions.fill(this.locators.FIELD, value), await this.actions.click(this.locators.FIELD), and await this.actions.browser.navigate(url). For an element observed inside an iframe, preserve its complete frame-scoped locator chain exactly (for example this.page.frameLocator(observedFrameSelector).getByRole(...)); never drop the frame scope or treat the control as belonging to the main page. Match the target framework examples and do not use raw Playwright interactions inside a page object.",
+      "Return the complete file set again. Implement every manual step in order; the generated code does not need to repeat the manual wording verbatim. Correct every listed standards violation and copy the architecture from the real source examples where needed. For new page behavior, create page-object/locator code using matching browser observations; never invent a selector that is absent from evidence. Every new locator expression must exactly match an expression in the Playwright CLI observations or an indexed framework locator. Use an iframe scope only when that exact full scope appears in browser evidence or a relevant indexed locator for this screen; a matching role/name without frame evidence is insufficient. Reuse matching indexed locator fields and page objects instead of declaring duplicate controls. For data-driven text assertions, a locator-class method may accept the expected value and use getByText(expectedValue) only when a literal getByText candidate for that assertion is present in the matching snapshot evidence; pass the value from the data row. If evidence is insufficient, do not invent a locator or leave a guessed CSS selector with an adjustment comment; keep the specific step unresolved and explain which live snapshot is missing.",
+      "Page methods must never call this.page.getByRole(...), this.page.frameLocator(...), this.page.locator(...), or this.page.goto(...). Put the observed locator in the paired locator class, then call the confirmed framework wrapper: await this.actions.fill(this.locators.FIELD, value), await this.actions.click(this.locators.FIELD), and await this.actions.browser.navigate(url). Preserve a frame scope only for an element observed inside that exact iframe; use no frame scope for a main-document element. Match the target framework examples and do not use raw Playwright interactions inside a page object.",
       "Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.",
       renderScreenArchitectureRequirements(manualCases),
       "Output only fenced TypeScript file blocks with repository-relative paths, including a tests/*.spec.ts file."
@@ -288997,7 +289012,7 @@ Target framework DataLoader import: ${dataLoaderImportPath}. Case rows returned 
     locatorClassBased: /export\s+class\s+\w+Locators/.test(locatorSource)
   };
 }
-function findFrameworkStandardIssues(changes, examples, customFixtureUsed, approvedLocatorExpressions = []) {
+function findFrameworkStandardIssues(changes, examples, customFixtureUsed, approvedLocatorExpressions = [], approvedFrameLocatorExpressions = [], reusableIndexedLocators = []) {
   const issues = [];
   const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, "/")}`));
   const pages = changes.filter((change) => /(^|\/)pages\/.+\.page\.tsx?$/.test(`/${change.path.replace(/\\/g, "/")}`));
@@ -289042,6 +289057,25 @@ function findFrameworkStandardIssues(changes, examples, customFixtureUsed, appro
       issues.push(`${locator.path} contains a guessed/unverified locator note. Remove it and use a locator observed in a Playwright snapshot or already indexed in the framework.`);
     }
     const allowed = new Set(approvedLocatorExpressions.map(normalizeLocatorExpression).filter(Boolean));
+    const allowedFrameScopes = new Set(approvedFrameLocatorExpressions.map(normalizeLocatorExpression).filter(Boolean));
+    const declaredExpressions = /* @__PURE__ */ new Map();
+    for (const field of source.matchAll(/^\s*readonly\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\r\n]+)\s*;?\s*$/gm)) {
+      const expression = extractLocatorExpressions(field[2] ?? "")[0];
+      if (!expression) continue;
+      const normalized = normalizeLocatorExpression(expression);
+      const previous = declaredExpressions.get(normalized);
+      if (previous) {
+        issues.push(`${locator.path} declares ${field[1]} as a duplicate of ${previous}; reuse one locator field instead of creating framed/unframed variants.`);
+      } else {
+        declaredExpressions.set(normalized, field[1]);
+      }
+      const reusable = reusableIndexedLocators.find(
+        (candidate) => candidate.file.replace(/\\/g, "/") !== locator.path.replace(/\\/g, "/") && normalizeLocatorExpression(candidate.expression) === normalized
+      );
+      if (reusable) {
+        issues.push(`${locator.path} duplicates indexed locator ${reusable.name} from ${reusable.file}; reuse its existing locator class/page object instead of redeclaring the locator.`);
+      }
+    }
     const locatorCalls = extractLocatorExpressions(source).map((expression) => ({
       expression,
       method: locatorCallDetails(expression)?.method ?? "",
@@ -289058,7 +289092,8 @@ function findFrameworkStandardIssues(changes, examples, customFixtureUsed, appro
     for (const match of locatorCalls) {
       const expression = match.expression.replace(/^this\.page\./, "");
       const normalizedExpression = normalizeLocatorExpression(expression);
-      const locatorIsObserved = isObservedLocatorExpression(normalizedExpression, allowed) || [...allowed].some((observed) => observed.startsWith(`${normalizedExpression}.`));
+      const hasFrameScope = normalizedExpression.includes("frameLocator(");
+      const locatorIsObserved = hasFrameScope ? allowedFrameScopes.has(normalizedExpression) || [...allowedFrameScopes].some((observed) => observed.startsWith(`${normalizedExpression}.`)) : isObservedLocatorExpression(normalizedExpression, allowed) || [...allowed].some((observed) => observed.startsWith(`${normalizedExpression}.`));
       if (!locatorIsObserved) {
         const callIndex = match.index;
         const method = stringParameterMethods.find(
@@ -289077,11 +289112,7 @@ function findFrameworkStandardIssues(changes, examples, customFixtureUsed, appro
 }
 function isObservedLocatorExpression(expression, allowed) {
   if (allowed.has(expression) || [...allowed].some((observed) => observed.startsWith(`${expression}.`))) return true;
-  if (!expression.includes("frameLocator(")) return false;
-  const details = locatorCallDetails(expression);
-  if (!details || details.method === "frameLocator") return false;
-  const observedLeaf = normalizeLocatorExpression(`${details.method}(${details.args})`);
-  return allowed.has(observedLeaf);
+  return false;
 }
 function normalizeLocatorExpression(expression) {
   const source = expression.trim().replace(/;\s*$/, "").replace(/^(?:(?:this\.)?page\.)/, "").replace(/locator\(([^()]*)\)\s*\.\s*contentFrame\s*\(\s*\)/g, "frameLocator($1)");
@@ -289330,13 +289361,7 @@ function rewriteObservedFrameLocators(changes, candidates) {
         );
         if (!ranked[0] || ranked[1] && ranked[0].sameFrame === ranked[1].sameFrame && ranked[0].unscopedControl === ranked[1].unscopedControl && ranked[0].score - ranked[1].score < 0.15) return line;
         const selected = ranked[0];
-        let scopedExpression;
-        if (selected.sameFrame || !selected.unscopedControl || !currentFrameScope) {
-          scopedExpression = selected.candidate.expression.replace(/^(?:(?:this\.)?page\.)/, "");
-        } else {
-          const observedLeaf = selected.candidate.expression.replace(/^(?:(?:this\.)?page\.)/, "");
-          scopedExpression = `${currentFrameScope}.${observedLeaf}`.replace(/^(?:(?:this\.)?page\.)/, "");
-        }
+        const scopedExpression = selected.candidate.expression.replace(/^(?:(?:this\.)?page\.)/, "");
         return `${prefix}this.page.${scopedExpression}${suffix}`;
       }
     );

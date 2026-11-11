@@ -5240,7 +5240,7 @@ var require_BufferList = __commonJS({
         this.head = this.tail = null;
         this.length = 0;
       };
-      BufferList.prototype.join = function join8(s) {
+      BufferList.prototype.join = function join9(s) {
         if (this.length === 0) return "";
         var p = this.head;
         var ret2 = "" + p.data;
@@ -14830,7 +14830,7 @@ var require_buffer_list = __commonJS({
         }
       }, {
         key: "join",
-        value: function join8(s) {
+        value: function join9(s) {
           if (this.length === 0) return "";
           var p = this.head;
           var ret2 = "" + p.data;
@@ -38155,8 +38155,8 @@ var require_graceful_fs = __commonJS({
       fs2.createReadStream = createReadStream;
       fs2.createWriteStream = createWriteStream;
       var fs$readFile = fs2.readFile;
-      fs2.readFile = readFile;
-      function readFile(path3, options, cb) {
+      fs2.readFile = readFile2;
+      function readFile2(path3, options, cb) {
         if (typeof options === "function")
           cb = options, options = null;
         return go$readFile(path3, options, cb);
@@ -38560,7 +38560,7 @@ var require_BufferList2 = __commonJS({
         this.head = this.tail = null;
         this.length = 0;
       };
-      BufferList.prototype.join = function join8(s) {
+      BufferList.prototype.join = function join9(s) {
         if (this.length === 0) return "";
         var p = this.head;
         var ret2 = "" + p.data;
@@ -40624,7 +40624,7 @@ var require_BufferList3 = __commonJS({
         this.head = this.tail = null;
         this.length = 0;
       };
-      BufferList.prototype.join = function join8(s) {
+      BufferList.prototype.join = function join9(s) {
         if (this.length === 0) return "";
         var p = this.head;
         var ret2 = "" + p.data;
@@ -61350,15 +61350,15 @@ var require_generators = __commonJS({
         var stack = new Error().stack;
         return function() {
           var generator = generatorFunction.apply(this, arguments);
-          var spawn4 = new PromiseSpawn$(
+          var spawn5 = new PromiseSpawn$(
             void 0,
             void 0,
             yieldHandler,
             stack
           );
-          var ret2 = spawn4.promise();
-          spawn4._generator = generator;
-          spawn4._promiseFulfilled(void 0);
+          var ret2 = spawn5.promise();
+          spawn5._generator = generator;
+          spawn5._promiseFulfilled(void 0);
           return ret2;
         };
       };
@@ -61373,9 +61373,9 @@ var require_generators = __commonJS({
         if (typeof generatorFunction !== "function") {
           return apiRejection("generatorFunction must be a function\n\n    See http://goo.gl/MqrFmX\n");
         }
-        var spawn4 = new PromiseSpawn(generatorFunction, this);
-        var ret2 = spawn4.promise();
-        spawn4._run(Promise2.spawn);
+        var spawn5 = new PromiseSpawn(generatorFunction, this);
+        var ret2 = spawn5.promise();
+        spawn5._run(Promise2.spawn);
         return ret2;
       };
     };
@@ -63099,7 +63099,7 @@ var require_BufferList5 = __commonJS({
         this.head = this.tail = null;
         this.length = 0;
       };
-      BufferList.prototype.join = function join8(s) {
+      BufferList.prototype.join = function join9(s) {
         if (this.length === 0) return "";
         var p = this.head;
         var ret2 = "" + p.data;
@@ -65308,7 +65308,7 @@ var require_BufferList6 = __commonJS({
         this.head = this.tail = null;
         this.length = 0;
       };
-      BufferList.prototype.join = function join8(s) {
+      BufferList.prototype.join = function join9(s) {
         if (this.length === 0) return "";
         var p = this.head;
         var ret2 = "" + p.data;
@@ -68289,7 +68289,7 @@ var require_dir_writer = __commonJS({
     module2.exports = DirWriter;
     var Writer = require_writer();
     var inherits2 = require_inherits();
-    var mkdir = require_mkdirp();
+    var mkdir2 = require_mkdirp();
     var path3 = require("path");
     var collect = require_collect();
     inherits2(DirWriter, Writer);
@@ -68305,7 +68305,7 @@ var require_dir_writer = __commonJS({
     }
     DirWriter.prototype._create = function() {
       var self2 = this;
-      mkdir(self2._path, Writer.dirmode, function(er) {
+      mkdir2(self2._path, Writer.dirmode, function(er) {
         if (er) return self2.error(er);
         self2.ready = true;
         self2.emit("ready");
@@ -68650,7 +68650,7 @@ var require_writer = __commonJS({
     var fs = require_graceful_fs();
     var inherits2 = require_inherits();
     var rimraf = require_rimraf();
-    var mkdir = require_mkdirp();
+    var mkdir2 = require_mkdirp();
     var path3 = require("path");
     var umask = process.platform === "win32" ? 0 : process.umask();
     var getType = require_get_type();
@@ -68756,7 +68756,7 @@ var require_writer = __commonJS({
       }
     };
     function create(self2) {
-      mkdir(path3.dirname(self2._path), Writer.dirmode, function(er, made) {
+      mkdir2(path3.dirname(self2._path), Writer.dirmode, function(er, made) {
         if (er) return self2.error(er);
         self2._madeDir = made;
         return self2._create();
@@ -80404,7 +80404,7 @@ ${lanes.join("\n")}
             writeOutputIsTTY() {
               return process.stdout.isTTY;
             },
-            readFile,
+            readFile: readFile2,
             writeFile: writeFile2,
             watchFile: watchFile2,
             watchDirectory,
@@ -80610,7 +80610,7 @@ ${lanes.join("\n")}
               callback
             );
           }
-          function readFile(fileName, _encoding) {
+          function readFile2(fileName, _encoding) {
             let buffer;
             try {
               buffer = _fs.readFileSync(fileName);
@@ -117166,7 +117166,7 @@ ${lanes.join("\n")}
         const possibleOption = getSpellingSuggestion(unknownOption, diagnostics.optionDeclarations, getOptionName);
         return possibleOption ? createDiagnosticForNodeInSourceFileOrCompilerDiagnostic(sourceFile, node, diagnostics.unknownDidYouMeanDiagnostic, unknownOptionErrorText || unknownOption, possibleOption.name) : createDiagnosticForNodeInSourceFileOrCompilerDiagnostic(sourceFile, node, diagnostics.unknownOptionDiagnostic, unknownOptionErrorText || unknownOption);
       }
-      function parseCommandLineWorker(diagnostics, commandLine, readFile) {
+      function parseCommandLineWorker(diagnostics, commandLine, readFile2) {
         const options = {};
         let watchOptions;
         const fileNames = [];
@@ -117214,7 +117214,7 @@ ${lanes.join("\n")}
           }
         }
         function parseResponseFile(fileName) {
-          const text = tryReadFile(fileName, readFile || ((fileName2) => sys.readFile(fileName2)));
+          const text = tryReadFile(fileName, readFile2 || ((fileName2) => sys.readFile(fileName2)));
           if (!isString(text)) {
             errors.push(text);
             return;
@@ -117317,8 +117317,8 @@ ${lanes.join("\n")}
         unknownDidYouMeanDiagnostic: Diagnostics.Unknown_compiler_option_0_Did_you_mean_1,
         optionTypeMismatchDiagnostic: Diagnostics.Compiler_option_0_expects_an_argument
       };
-      function parseCommandLine(commandLine, readFile) {
-        return parseCommandLineWorker(compilerOptionsDidYouMeanDiagnostics, commandLine, readFile);
+      function parseCommandLine(commandLine, readFile2) {
+        return parseCommandLineWorker(compilerOptionsDidYouMeanDiagnostics, commandLine, readFile2);
       }
       function getOptionFromName(optionName, allowShort) {
         return getOptionDeclarationFromName(getOptionsNameMap, optionName, allowShort);
@@ -117400,8 +117400,8 @@ ${lanes.join("\n")}
           watchOptionsToExtend
         );
       }
-      function readConfigFile(fileName, readFile) {
-        const textOrDiagnostic = tryReadFile(fileName, readFile);
+      function readConfigFile(fileName, readFile2) {
+        const textOrDiagnostic = tryReadFile(fileName, readFile2);
         return isString(textOrDiagnostic) ? parseConfigFileTextToJson(fileName, textOrDiagnostic) : { config: {}, error: textOrDiagnostic };
       }
       function parseConfigFileTextToJson(fileName, jsonText) {
@@ -117416,14 +117416,14 @@ ${lanes.join("\n")}
           error: jsonSourceFile.parseDiagnostics.length ? jsonSourceFile.parseDiagnostics[0] : void 0
         };
       }
-      function readJsonConfigFile(fileName, readFile) {
-        const textOrDiagnostic = tryReadFile(fileName, readFile);
+      function readJsonConfigFile(fileName, readFile2) {
+        const textOrDiagnostic = tryReadFile(fileName, readFile2);
         return isString(textOrDiagnostic) ? parseJsonText(fileName, textOrDiagnostic) : { fileName, parseDiagnostics: [textOrDiagnostic] };
       }
-      function tryReadFile(fileName, readFile) {
+      function tryReadFile(fileName, readFile2) {
         let text;
         try {
-          text = readFile(fileName);
+          text = readFile2(fileName);
         } catch (e) {
           return createCompilerDiagnostic(Diagnostics.Cannot_read_file_0_Colon_1, fileName, e.message);
         }
@@ -207081,12 +207081,12 @@ ${lanes.join("\n")}
       function createCompilerHost(options, setParentNodes) {
         return createCompilerHostWorker(options, setParentNodes);
       }
-      function createGetSourceFile(readFile, setParentNodes) {
+      function createGetSourceFile(readFile2, setParentNodes) {
         return (fileName, languageVersionOrOptions, onError) => {
           let text;
           try {
             mark("beforeIORead");
-            text = readFile(fileName);
+            text = readFile2(fileName);
             mark("afterIORead");
             measure("I/O Read", "beforeIORead", "afterIORead");
           } catch (e) {
@@ -207990,7 +207990,7 @@ ${lanes.join("\n")}
           getRedirectFromOutput,
           forEachResolvedProjectReference: forEachResolvedProjectReference2
         });
-        const readFile = host.readFile.bind(host);
+        const readFile2 = host.readFile.bind(host);
         (_e = tracing) == null ? void 0 : _e.push(tracing.Phase.Program, "shouldProgramCreateNewSourceFiles", { hasOldProgram: !!oldProgram });
         const shouldCreateNewSourceFile = shouldProgramCreateNewSourceFiles(oldProgram, options);
         (_f = tracing) == null ? void 0 : _f.pop();
@@ -208216,7 +208216,7 @@ ${lanes.join("\n")}
           shouldTransformImportCall,
           emitBuildInfo,
           fileExists,
-          readFile,
+          readFile: readFile2,
           directoryExists,
           getSymlinkCache,
           realpath: (_o = host.realpath) == null ? void 0 : _o.bind(host),
@@ -282556,8 +282556,8 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var vscode = __toESM(require("vscode"));
 var import_node_crypto4 = require("node:crypto");
-var import_node_fs9 = require("node:fs");
-var import_node_path11 = require("node:path");
+var import_node_fs10 = require("node:fs");
+var import_node_path12 = require("node:path");
 
 // apps/vscode-extension/src/copilot-bridge.ts
 init_src();
@@ -282684,8 +282684,8 @@ init_src2();
 
 // packages/cli/src/runner.ts
 var import_node_crypto3 = require("node:crypto");
-var import_node_fs7 = require("node:fs");
-var import_node_path9 = require("node:path");
+var import_node_fs8 = require("node:fs");
+var import_node_path10 = require("node:path");
 
 // packages/adapters/src/abstract-adapter.ts
 function normaliseAction(raw) {
@@ -285945,6 +285945,7 @@ function quoteForLog(arg) {
 var PlaywrightCliAdapter = class {
   opts;
   sessionCreated = false;
+  attachedToExternalBrowser = false;
   info = {
     id: "playwright-cli",
     label: "Playwright CLI"
@@ -285970,6 +285971,13 @@ var PlaywrightCliAdapter = class {
     };
   }
   async goto(url, options) {
+    if (this.opts.cdpEndpoint && !this.attachedToExternalBrowser) {
+      const attached = await this.run(["attach", `--cdp=${this.opts.cdpEndpoint}`], options);
+      if (!attached.ok) return attached;
+      this.attachedToExternalBrowser = true;
+      this.sessionCreated = true;
+      return this.navigate(url, options);
+    }
     const browserArgs = this.openArgs();
     const result = await this.run(["open", url, ...browserArgs], options);
     this.sessionCreated = result.ok || this.sessionCreated;
@@ -286051,6 +286059,12 @@ var PlaywrightCliAdapter = class {
    * be made to guess whether a session existed before asking for it to go away.
    */
   async close(options) {
+    if (this.attachedToExternalBrowser) {
+      const result2 = await this.run(["detach"], options);
+      this.attachedToExternalBrowser = false;
+      this.sessionCreated = false;
+      return result2;
+    }
     const result = await this.run(["close"], options);
     if (!result.ok && /no.*session|not.*open|already.*closed/i.test(result.error ?? "")) {
       return { ok: true, output: "No open session." };
@@ -286489,7 +286503,10 @@ var PlaywrightMcpAdapter = class {
         ...this.opts.browser ? ["--browser", this.opts.browser] : [],
         ...this.opts.allowedHosts?.length ? ["--allowed-hosts", this.opts.allowedHosts.join(",")] : []
       ];
-      if (!args.includes("--isolated")) args.push("--isolated");
+      const attachesToExistingBrowser = args.some(
+        (arg) => arg.startsWith("--cdp-endpoint") || arg === "--extension" || arg.startsWith("--extension=")
+      );
+      if (!attachesToExistingBrowser && !args.includes("--isolated")) args.push("--isolated");
       const child = (0, import_node_child_process3.spawn)(command, args, {
         cwd: this.opts.cwd,
         env: { ...process.env, ...this.opts.env ?? {} },
@@ -286753,9 +286770,122 @@ var BrowserSession = class {
 // packages/browser-tools/src/browser-session-factory.ts
 function createBrowserSession(options) {
   const cwd = options.workingDirectory ?? options.repositoryRoot;
-  const primary = new PlaywrightCliAdapter({ ...options.cli, cwd });
-  const fallback = options.mcp?.command ? new PlaywrightMcpAdapter({ ...options.mcp, cwd }) : void 0;
+  const primary = new PlaywrightCliAdapter({ ...options.cli, cdpEndpoint: options.cdpEndpoint ?? options.cli?.cdpEndpoint, cwd });
+  const mcp = options.cdpEndpoint ? {
+    ...options.mcp,
+    extraServerArgs: [...options.mcp?.extraServerArgs ?? [], `--cdp-endpoint=${options.cdpEndpoint}`]
+  } : options.mcp;
+  const fallback = mcp?.command ? new PlaywrightMcpAdapter({ ...mcp, cwd }) : void 0;
   return new BrowserSession({ primary, fallback });
+}
+
+// packages/browser-tools/src/isolated-cdp-browser.ts
+var import_node_child_process4 = require("node:child_process");
+var import_node_fs7 = require("node:fs");
+var import_promises = require("node:fs/promises");
+var import_node_path9 = require("node:path");
+var IsolatedCdpBrowser = class _IsolatedCdpBrowser {
+  constructor(endpoint, profileDirectory, child) {
+    this.endpoint = endpoint;
+    this.profileDirectory = profileDirectory;
+    this.child = child;
+  }
+  static async launch(profileRoot, timeoutMs = 2e4) {
+    const executable = findChromiumExecutable();
+    if (!executable) {
+      throw new Error("TestPilot could not find Google Chrome or Microsoft Edge to create a shared isolated browser session.");
+    }
+    await (0, import_promises.mkdir)(profileRoot, { recursive: true });
+    const profileDirectory = await (0, import_promises.mkdtemp)((0, import_node_path9.join)(profileRoot, "tcoe-cdp-"));
+    const child = (0, import_node_child_process4.spawn)(executable, [
+      "--remote-debugging-port=0",
+      `--user-data-dir=${profileDirectory}`,
+      "--incognito",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-session-crashed-bubble",
+      "about:blank"
+    ], { stdio: "ignore", windowsHide: true, detached: process.platform !== "win32" });
+    let spawnError;
+    child.once("error", (error) => {
+      spawnError = error;
+    });
+    const activePortPath = (0, import_node_path9.join)(profileDirectory, "DevToolsActivePort");
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (spawnError) {
+        await stopOwnedBrowser(child);
+        await (0, import_promises.rm)(profileDirectory, { recursive: true, force: true });
+        throw new Error(`Could not start the isolated browser: ${spawnError.message}`);
+      }
+      if (child.exitCode !== null) {
+        await (0, import_promises.rm)(profileDirectory, { recursive: true, force: true });
+        throw new Error(`The isolated browser exited during startup (code ${child.exitCode}).`);
+      }
+      try {
+        const [portLine] = (await (0, import_promises.readFile)(activePortPath, "utf8")).split(/\r?\n/);
+        const port = Number(portLine);
+        if (Number.isInteger(port) && port > 0 && port < 65536) {
+          return new _IsolatedCdpBrowser(`http://127.0.0.1:${port}`, profileDirectory, child);
+        }
+      } catch {
+      }
+      await new Promise((resolve5) => setTimeout(resolve5, 100));
+    }
+    await stopOwnedBrowser(child);
+    await (0, import_promises.rm)(profileDirectory, { recursive: true, force: true });
+    throw new Error("Timed out waiting for the isolated browser to expose its local DevTools connection.");
+  }
+  async close() {
+    await stopOwnedBrowser(this.child);
+    await (0, import_promises.rm)(this.profileDirectory, { recursive: true, force: true });
+  }
+};
+function findChromiumExecutable() {
+  const env2 = process.env;
+  const candidates = process.platform === "win32" ? [
+    env2["ProgramFiles"] && (0, import_node_path9.join)(env2["ProgramFiles"], "Google", "Chrome", "Application", "chrome.exe"),
+    env2["ProgramFiles(x86)"] && (0, import_node_path9.join)(env2["ProgramFiles(x86)"], "Google", "Chrome", "Application", "chrome.exe"),
+    env2["LOCALAPPDATA"] && (0, import_node_path9.join)(env2["LOCALAPPDATA"], "Google", "Chrome", "Application", "chrome.exe"),
+    env2["ProgramFiles"] && (0, import_node_path9.join)(env2["ProgramFiles"], "Microsoft", "Edge", "Application", "msedge.exe"),
+    env2["ProgramFiles(x86)"] && (0, import_node_path9.join)(env2["ProgramFiles(x86)"], "Microsoft", "Edge", "Application", "msedge.exe"),
+    env2["LOCALAPPDATA"] && (0, import_node_path9.join)(env2["LOCALAPPDATA"], "Microsoft", "Edge", "Application", "msedge.exe")
+  ] : process.platform === "darwin" ? [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+  ] : [
+    ...["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"]
+  ].flatMap((name) => (env2["PATH"] ?? "").split(import_node_path9.delimiter).map((directory) => (0, import_node_path9.join)(directory, name)));
+  return candidates.find((candidate) => Boolean(candidate && (0, import_node_fs7.existsSync)(candidate)));
+}
+async function stopOwnedBrowser(child) {
+  if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
+  if (process.platform === "win32") {
+    await new Promise((resolve5) => {
+      const killer = (0, import_node_child_process4.spawn)("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      killer.once("error", () => resolve5());
+      killer.once("exit", () => resolve5());
+    });
+  } else {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+      }
+    }
+  }
+  await Promise.race([
+    new Promise((resolve5) => child.once("exit", () => resolve5())),
+    new Promise((resolve5) => setTimeout(resolve5, 2e3))
+  ]);
+  if (child.exitCode === null && child.signalCode === null) {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+    }
+  }
 }
 
 // packages/cli/src/runner.ts
@@ -286868,7 +286998,7 @@ async function runAgent(options) {
   const analysis = analyzeFramework({
     repositoryRoot: options.repositoryRoot,
     testCase,
-    indexDir: options.readOnly ? void 0 : (0, import_node_path9.join)(options.stateDir, "index"),
+    indexDir: options.readOnly ? void 0 : (0, import_node_path10.join)(options.stateDir, "index"),
     persistIndex: !options.readOnly
   });
   task.repositorySnapshot = snapshotRepository(
@@ -287070,16 +287200,32 @@ ${item.detail}`
   };
 }
 async function gatherEvidenceForTestCase(browser, options) {
-  const evidence = [];
-  const locatorCandidates = [];
-  const navigation = await browser.navigate(options.targetUrl, { signal: options.signal });
-  if (navigation.detail.startsWith("Navigation failed:")) {
-    throw new Error(navigation.detail);
+  const evidence = [...options.resumeEvidence ?? []];
+  const locatorCandidates = [...options.resumeLocatorCandidates ?? []];
+  let navigation = evidence.find((item) => item.kind === "navigation");
+  let currentUrl = options.resumeCurrentUrl ?? options.targetUrl;
+  let snapshot;
+  if (options.resumeFromStepIndex !== void 0) {
+    navigation ??= {
+      kind: "navigation",
+      detail: `Continuing the current browser session at step ${options.resumeFromStepIndex + 1}.`,
+      source: browser.provenance ?? { backendId: "playwright-cli", backendLabel: "Playwright CLI", fellBack: false }
+    };
+    snapshot = await captureScreen(`Fallback attached to the current page; resuming at step ${options.resumeFromStepIndex + 1}`, currentUrl);
+  } else {
+    const opened = await browser.navigate(options.targetUrl, { signal: options.signal });
+    navigation = opened;
+    if (opened.detail.startsWith("Navigation failed:")) throw new Error(opened.detail);
+    evidence.push(opened);
+    await waitForPageReady("Initial navigation");
+    snapshot = await captureScreen("Starting page", currentUrl);
   }
-  evidence.push(navigation);
-  await waitForPageReady("Initial navigation");
-  let currentUrl = options.targetUrl;
-  let snapshot = await captureScreen("Starting page", currentUrl);
+  navigation ??= {
+    kind: "navigation",
+    detail: "Browser session is active.",
+    source: browser.provenance ?? { backendId: "playwright-cli", backendLabel: "Playwright CLI", fellBack: false }
+  };
+  const navigationSource = navigation.source;
   const locatorActionSteps = options.steps.filter((step) => isLocatorAction(step.action));
   if (options.mode === "start-page") {
     const firstAction = locatorActionSteps[0];
@@ -287088,8 +287234,11 @@ async function gatherEvidenceForTestCase(browser, options) {
     }
     return { evidence, locatorCandidates };
   }
+  let nextStepIndex = options.resumeFromStepIndex ?? 0;
   try {
     for (const [stepIndex, step] of options.steps.entries()) {
+      if (stepIndex < (options.resumeFromStepIndex ?? 0)) continue;
+      nextStepIndex = stepIndex;
       if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
       if (isManualWaitStep(step.action)) {
         const awaitedStep = options.steps.slice(stepIndex + 1).find((candidate) => isLocatorAction(candidate.action));
@@ -287164,7 +287313,7 @@ async function gatherEvidenceForTestCase(browser, options) {
                 evidence.push({
                   kind: "interaction",
                   detail: `Step ${step.order}: opened the uniquely observed Search shell-bar button to reveal the Search field required by the next manual step.`,
-                  source: opened.provenance ?? browser.provenance ?? navigation.source
+                  source: opened.provenance ?? browser.provenance ?? navigationSource
                 });
               }
             }
@@ -287178,8 +287327,15 @@ async function gatherEvidenceForTestCase(browser, options) {
         }
         if (!matched) {
           if (!mfaNoticeSent && !options.fallbackRetry && browser.activateFallback(`Playwright CLI exposed no matching control for explicit wait target "${targetDescription ?? ""}"`)) {
-            options.onStatus?.(`Playwright CLI could not expose the awaited ${targetDescription ?? "page"} control. Restarting the manual flow with Playwright MCP to inspect it.`);
-            return gatherEvidenceForTestCase(browser, { ...options, fallbackRetry: true });
+            options.onStatus?.(`Playwright CLI could not expose the awaited ${targetDescription ?? "page"} control. Continuing from the current page with Playwright MCP.`);
+            return gatherEvidenceForTestCase(browser, {
+              ...options,
+              fallbackRetry: true,
+              resumeFromStepIndex: stepIndex,
+              resumeCurrentUrl: currentUrl,
+              resumeEvidence: evidence,
+              resumeLocatorCandidates: locatorCandidates
+            });
           }
           const observed = lastObservedControls.length > 0 ? ` Latest visible controls: ${lastObservedControls.join("; ")}.` : " No named visible controls were exposed.";
           const pageContext = lastObservedPage ? ` Last observed page: ${lastObservedPage}.` : "";
@@ -287189,8 +287345,9 @@ async function gatherEvidenceForTestCase(browser, options) {
         evidence.push({
           kind: "snapshot",
           detail: `Step ${step.order} explicit wait completed: observed ${matched.role ?? "element"} "${matched.name || targetDescription}" in a fresh browser snapshot before continuing.`,
-          source: browser.provenance ?? navigation.source
+          source: browser.provenance ?? navigationSource
         });
+        nextStepIndex = stepIndex + 1;
         snapshot = await captureScreen(`After wait step ${step.order}`, currentUrl);
         continue;
       }
@@ -287203,10 +287360,12 @@ async function gatherEvidenceForTestCase(browser, options) {
               ...result,
               detail: `Step ${step.order} navigation failed: ${result.detail}`
             });
+            nextStepIndex = stepIndex + 1;
             continue;
           }
           evidence.push({ ...result, detail: `Step ${step.order}: ${result.detail}` });
           currentUrl = explicitUrl;
+          nextStepIndex = stepIndex + 1;
           await waitForPageReady(`Step ${step.order} navigation`);
           snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl);
         }
@@ -287229,7 +287388,7 @@ async function gatherEvidenceForTestCase(browser, options) {
         evidence.push({
           kind: "interaction",
           detail: observed.length > 0 ? `Step ${step.order} assertion locator candidates were generated from matching visible text in the post-action snapshot.` : `Step ${step.order} assertion has no matching visible text/ref in the current snapshot; no locator was inferred.`,
-          source: browser.provenance ?? navigation.source
+          source: browser.provenance ?? navigationSource
         });
       } else if (!action && isLocatorAction(step.action)) {
         throw new Error(`Step ${step.order} could not be replayed safely: unsupported browser action "${step.action}". No later screen evidence was collected.`);
@@ -287273,7 +287432,7 @@ async function gatherEvidenceForTestCase(browser, options) {
             evidence.push({
               kind: "snapshot",
               detail: bestSnapshotScore < 0.35 ? `Step ${step.order}: enriched generic accessibility snapshot labels with ${newElements.length} visible DOM target(s) for "${action.target}".` : `Step ${step.order}: supplemented the snapshot match with ${newElements.length} visible DOM target(s), including frame-scoped locator evidence for "${action.target}".`,
-              source: browser.provenance ?? navigation.source
+              source: browser.provenance ?? navigationSource
             });
           }
         }
@@ -287401,8 +287560,9 @@ async function gatherEvidenceForTestCase(browser, options) {
         evidence.push({
           kind: "interaction",
           detail: sidebarTrialForStep ? `Step ${step.order} selected sidebar locator ${target.ref} after candidate attempt ${sidebarTrialForStep.attempt}; the following step's target was visible: ${step.action}` : clickTriggeredNavigationWaitTimeout ? `Step ${step.order} click completed, but the CLI timed out waiting for the scheduled navigation; the flow continued without repeating the click: ${step.action}` : mcpTimeoutProgressed ? `Step ${step.order} MCP click timed out, but a fresh snapshot confirmed a changed screen and the next step's target; the click was not repeated: ${step.action}` : recoveredFrameLocator ? `Step ${step.order}: refreshed frame evidence after a stale locator and succeeded with another observed matching locator: ${step.action}` : `Step ${step.order} replayed: ${step.action}`,
-          source: result.provenance ?? browser.provenance ?? navigation.source
+          source: result.provenance ?? browser.provenance ?? navigationSource
         });
+        nextStepIndex = stepIndex + 1;
         const location = sidebarTrialForStep ? void 0 : await browser.execute(
           (tool, callOptions) => tool.eval("() => window.location.href", void 0, callOptions),
           { signal: options.signal }
@@ -287422,8 +287582,15 @@ async function gatherEvidenceForTestCase(browser, options) {
   } catch (error) {
     if ((error instanceof SnapshotTargetUnavailableError || error instanceof BrowserSnapshotUnavailableError) && !options.fallbackRetry) {
       if (browser.activateFallback(`The primary browser backend could not provide usable evidence: ${error.message}`)) {
-        options.onStatus?.(`The primary browser backend could not provide usable evidence. Restarting the isolated manual flow with Playwright MCP to inspect the application state.`);
-        return gatherEvidenceForTestCase(browser, { ...options, fallbackRetry: true });
+        options.onStatus?.(`The primary browser backend could not provide usable evidence. Continuing at the current page with Playwright MCP.`);
+        return gatherEvidenceForTestCase(browser, {
+          ...options,
+          fallbackRetry: true,
+          resumeFromStepIndex: nextStepIndex,
+          resumeCurrentUrl: currentUrl,
+          resumeEvidence: evidence,
+          resumeLocatorCandidates: locatorCandidates
+        });
       }
       throw new Error(`${error.message} Playwright MCP fallback is unavailable.`);
     }
@@ -287433,7 +287600,7 @@ async function gatherEvidenceForTestCase(browser, options) {
   async function captureScreen(label, pageUrl) {
     const observed = await browser.capture(void 0, { signal: options.signal });
     if (!observed) throw new BrowserSnapshotUnavailableError(`The active browser backend could not capture a snapshot for ${label}.`);
-    const source = browser.provenance ?? navigation.source;
+    const source = browser.provenance ?? navigationSource;
     const elements = observed.elements.slice(0, 40).map((element) => `${element.role ?? "element"}${element.name ? ` "${element.name}"` : ""} [${element.ref}]`);
     evidence.push({
       kind: "snapshot",
@@ -287531,7 +287698,7 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
           evidence.push({
             kind: "snapshot",
             detail: `Step ${stepIndex + 1} candidate ${attempts} was confirmed because the next manual step target "${expectedNext.target}" appeared in the resulting screen.`,
-            source: browser.provenance ?? navigation.source
+            source: browser.provenance ?? navigationSource
           });
           return { target: candidate, result, snapshot: afterWithDom, url: observedUrl, attempt: attempts };
         }
@@ -288216,18 +288383,18 @@ async function generateChangesFromProvider(options) {
   ])].filter((path3) => /^pages\//i.test(path3.replace(/\\/g, "/"))).slice(0, 6);
   const existingPageSources = existingScreenPaths.flatMap((sourcePath) => {
     const normalizedPath = sourcePath.replace(/\\/g, "/");
-    const locatorAbsolute = (0, import_node_path9.join)(options.repositoryRoot, normalizedPath);
-    if (!(0, import_node_fs7.existsSync)(locatorAbsolute)) return [];
+    const locatorAbsolute = (0, import_node_path10.join)(options.repositoryRoot, normalizedPath);
+    if (!(0, import_node_fs8.existsSync)(locatorAbsolute)) return [];
     const pagePath = normalizedPath.replace(/\.locators\.tsx?$/i, ".page.ts");
-    const pageAbsolute = (0, import_node_path9.join)(options.repositoryRoot, pagePath);
+    const pageAbsolute = (0, import_node_path10.join)(options.repositoryRoot, pagePath);
     return [
-      ...(0, import_node_fs7.existsSync)(pageAbsolute) ? [`EXISTING SCREEN PAGE ${pagePath}
+      ...(0, import_node_fs8.existsSync)(pageAbsolute) ? [`EXISTING SCREEN PAGE ${pagePath}
 \`\`\`typescript
-${(0, import_node_fs7.readFileSync)(pageAbsolute, "utf-8").slice(0, 5e3)}
+${(0, import_node_fs8.readFileSync)(pageAbsolute, "utf-8").slice(0, 5e3)}
 \`\`\``] : [],
       `EXISTING SCREEN LOCATORS ${normalizedPath}
 \`\`\`typescript
-${(0, import_node_fs7.readFileSync)(locatorAbsolute, "utf-8").slice(0, 5e3)}
+${(0, import_node_fs8.readFileSync)(locatorAbsolute, "utf-8").slice(0, 5e3)}
 \`\`\``
     ];
   });
@@ -288475,7 +288642,7 @@ function findScreenPageArchitectureIssues(changes, cases, repositoryRoot) {
     }
     if (pageFolder) generatedPageFolders.add(pageFolder);
     const generatedPage = changes.find((change) => change.path === pagePath);
-    const source = generatedPage?.newContent ?? ((0, import_node_fs7.existsSync)((0, import_node_path9.join)(repositoryRoot, pagePath)) ? (0, import_node_fs7.readFileSync)((0, import_node_path9.join)(repositoryRoot, pagePath), "utf-8") : "");
+    const source = generatedPage?.newContent ?? ((0, import_node_fs8.existsSync)((0, import_node_path10.join)(repositoryRoot, pagePath)) ? (0, import_node_fs8.readFileSync)((0, import_node_path10.join)(repositoryRoot, pagePath), "utf-8") : "");
     if (!source || !new RegExp(`export\\s+class\\s+${className}\\s+extends\\s+BasePage\\b`).test(source)) {
       issues.push(`The imported page class ${className} must be exported from '${pagePath}' and extend BasePage.`);
       continue;
@@ -288486,8 +288653,8 @@ function findScreenPageArchitectureIssues(changes, cases, repositoryRoot) {
     }
     const locatorPath = pagePath.replace(/\.page\.tsx?$/i, ".locators.ts");
     const locator = changes.find((change) => change.path === locatorPath);
-    const locatorSource = locator?.newContent ?? ((0, import_node_fs7.existsSync)((0, import_node_path9.join)(repositoryRoot, locatorPath)) ? (0, import_node_fs7.readFileSync)((0, import_node_path9.join)(repositoryRoot, locatorPath), "utf-8") : "");
-    const locatorModule = (0, import_node_path9.basename)(locatorPath).replace(/\.ts$/i, "");
+    const locatorSource = locator?.newContent ?? ((0, import_node_fs8.existsSync)((0, import_node_path10.join)(repositoryRoot, locatorPath)) ? (0, import_node_fs8.readFileSync)((0, import_node_path10.join)(repositoryRoot, locatorPath), "utf-8") : "");
+    const locatorModule = (0, import_node_path10.basename)(locatorPath).replace(/\.ts$/i, "");
     const locatorImportPattern = new RegExp(`from\\s+['"]\\./${escapeRegExp(locatorModule)}(?:\\.tsx?)?['"]`);
     if (!locatorSource || !/export\s+class\s+\w+Locators\b/.test(locatorSource) || !locatorImportPattern.test(source)) {
       issues.push(`${pagePath} must have a paired locator class in '${locatorPath}' and import that class.`);
@@ -288537,15 +288704,15 @@ function casesShareFlow(cases, dataCases) {
   );
 }
 function readExistingJson(repositoryRoot, relativePath) {
-  const path3 = (0, import_node_path9.join)(repositoryRoot, relativePath);
-  if (!(0, import_node_fs7.existsSync)(path3)) return void 0;
-  return (0, import_node_fs7.readFileSync)(path3, "utf-8").slice(0, 12e3);
+  const path3 = (0, import_node_path10.join)(repositoryRoot, relativePath);
+  if (!(0, import_node_fs8.existsSync)(path3)) return void 0;
+  return (0, import_node_fs8.readFileSync)(path3, "utf-8").slice(0, 12e3);
 }
 function supportsJsonModuleImports(repositoryRoot) {
-  const tsconfigPath = (0, import_node_path9.join)(repositoryRoot, "tsconfig.json");
-  if (!(0, import_node_fs7.existsSync)(tsconfigPath)) return false;
+  const tsconfigPath = (0, import_node_path10.join)(repositoryRoot, "tsconfig.json");
+  if (!(0, import_node_fs8.existsSync)(tsconfigPath)) return false;
   try {
-    const source = (0, import_node_fs7.readFileSync)(tsconfigPath, "utf-8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g, "");
+    const source = (0, import_node_fs8.readFileSync)(tsconfigPath, "utf-8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g, "");
     return /"resolveJsonModule"\s*:\s*true\b/.test(source);
   } catch {
     return false;
@@ -288585,7 +288752,7 @@ function applyDirectJsonDataFallback(changes, data) {
       }
       source = source.slice(0, start) + block + source.slice(end);
     }
-    const importPath = (0, import_node_path9.relative)((0, import_node_path9.dirname)(change.path), data.targetPath).replace(/\\/g, "/");
+    const importPath = (0, import_node_path10.relative)((0, import_node_path10.dirname)(change.path), data.targetPath).replace(/\\/g, "/");
     const specifier = importPath.startsWith(".") ? importPath : `./${importPath}`;
     const importLine = `import ${jsonImportName} from '${specifier}'
 `;
@@ -288663,7 +288830,7 @@ function manualDataUsageIssues(changes, data, expectedDataLoaderImportPath, acce
     }
     if (accessMode === "data-loader" && !modulePattern.test(source)) issues.push(`${spec.path} must load the shared '${data.moduleName}' module through DataLoader.`);
     if (accessMode === "direct-json") {
-      const expectedPath = (0, import_node_path9.relative)((0, import_node_path9.dirname)(spec.path), data.targetPath).replace(/\\/g, "/");
+      const expectedPath = (0, import_node_path10.relative)((0, import_node_path10.dirname)(spec.path), data.targetPath).replace(/\\/g, "/");
       const expectedSpecifier = expectedPath.startsWith(".") ? expectedPath : `./${expectedPath}`;
       if (jsonImport?.[1] !== expectedSpecifier) issues.push(`${spec.path} must import the generated '${data.targetPath}' JSON directly using its relative path.`);
       if (dataLoaderImport || /DataLoader\s*\.\s*get\s*\(/.test(source)) issues.push(`${spec.path} must use the direct JSON import consistently after the DataLoader fallback.`);
@@ -288928,11 +289095,11 @@ function findAssertionLocatorIssues(changes, testCases, candidates) {
   return [...new Set(issues)];
 }
 function buildManualDataChanges(repositoryRoot, dataPath, data) {
-  const absoluteDataPath = (0, import_node_path9.join)(repositoryRoot, dataPath);
+  const absoluteDataPath = (0, import_node_path10.join)(repositoryRoot, dataPath);
   let allRows = {};
-  if ((0, import_node_fs7.existsSync)(absoluteDataPath)) {
+  if ((0, import_node_fs8.existsSync)(absoluteDataPath)) {
     try {
-      const parsed = JSON.parse((0, import_node_fs7.readFileSync)(absoluteDataPath, "utf-8"));
+      const parsed = JSON.parse((0, import_node_fs8.readFileSync)(absoluteDataPath, "utf-8"));
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("expected an object");
       allRows = parsed;
     } catch (error) {
@@ -288942,15 +289109,15 @@ function buildManualDataChanges(repositoryRoot, dataPath, data) {
   for (const testCase of data.cases) allRows[testCase.caseKey] = testCase.values;
   const changes = [{
     path: dataPath,
-    kind: (0, import_node_fs7.existsSync)(absoluteDataPath) ? "modify" : "create",
+    kind: (0, import_node_fs8.existsSync)(absoluteDataPath) ? "modify" : "create",
     newContent: `${JSON.stringify(allRows, null, 2)}
 `,
     reason: `Added ${data.cases.length} non-secret case row(s) to the shared '${data.moduleName}' scenario module.`,
     evidence: ["Values were extracted from quoted fill/enter/type actions in the normalized manual test case."]
   }];
-  const typePath = (0, import_node_path9.join)(repositoryRoot, "src/utils/testData/dataTypes.ts");
-  if (!(0, import_node_fs7.existsSync)(typePath)) return changes;
-  const typeSource = (0, import_node_fs7.readFileSync)(typePath, "utf-8");
+  const typePath = (0, import_node_path10.join)(repositoryRoot, "src/utils/testData/dataTypes.ts");
+  if (!(0, import_node_fs8.existsSync)(typePath)) return changes;
+  const typeSource = (0, import_node_fs8.readFileSync)(typePath, "utf-8");
   const registry = typeSource.match(/(export\s+interface\s+DataRegistry\s*\{)([\s\S]*?)(\n\s*\})/);
   if (!registry || new RegExp(`^\\s*${data.moduleName}\\s*:`, "m").test(registry[2])) return changes;
   const desiredEntry = `
@@ -288970,7 +289137,7 @@ function renderFrameworkExamples(analysis) {
   const files = analysis.analysis.indexedFiles;
   const read = (file) => {
     try {
-      return (0, import_node_fs7.readFileSync)(file.absolutePath, "utf-8");
+      return (0, import_node_fs8.readFileSync)(file.absolutePath, "utf-8");
     } catch {
       return "";
     }
@@ -289199,17 +289366,17 @@ async function generateRepairChanges(options) {
   }
   for (const path3 of options.task.appliedChanges) {
     const resolved = new Workspace(options.repositoryRoot).tryResolve(path3);
-    if (!resolved || !(0, import_node_fs7.existsSync)(resolved.resolved)) throw new Error(`Applied source file is missing or outside the repository: ${path3}`);
+    if (!resolved || !(0, import_node_fs8.existsSync)(resolved.resolved)) throw new Error(`Applied source file is missing or outside the repository: ${path3}`);
     const expected = options.task.appliedFileFingerprints?.[resolved.relative];
-    if (!expected || fingerprint((0, import_node_fs7.readFileSync)(resolved.resolved, "utf-8")) !== expected) {
+    if (!expected || fingerprint((0, import_node_fs8.readFileSync)(resolved.resolved, "utf-8")) !== expected) {
       throw new Error(`Applied source changed since TestPilot last wrote it: ${resolved.relative}. Re-validate and re-plan before repair.`);
     }
   }
   const workspace2 = new Workspace(options.repositoryRoot);
   const sourceBlocks = options.task.appliedChanges.flatMap((path3) => {
     const resolved = workspace2.tryResolve(path3);
-    if (!resolved || !(0, import_node_fs7.existsSync)(resolved.resolved)) return [];
-    const source = (0, import_node_fs7.readFileSync)(resolved.resolved, "utf-8").slice(0, 24e3);
+    if (!resolved || !(0, import_node_fs8.existsSync)(resolved.resolved)) return [];
+    const source = (0, import_node_fs8.readFileSync)(resolved.resolved, "utf-8").slice(0, 24e3);
     return [`SOURCE ${resolved.relative}
 \`\`\`typescript
 ${source}
@@ -289263,7 +289430,7 @@ ${sourceBlocks.join("\n\n")}`
   for (const change of scoped.filter((item) => /\.locators\.tsx?$/.test(item.path))) {
     const resolved = workspace2.tryResolve(change.path);
     if (!resolved) return [];
-    const before = (0, import_node_fs7.readFileSync)(resolved.resolved, "utf-8");
+    const before = (0, import_node_fs8.readFileSync)(resolved.resolved, "utf-8");
     const oldExpressions = new Set(extractLocatorExpressions(before).map(normalizeLocatorExpression));
     const proposedExpressions = extractLocatorExpressions(change.newContent ?? "");
     const newExpressions = proposedExpressions.map(normalizeLocatorExpression).filter((expression) => !oldExpressions.has(expression));
@@ -289450,7 +289617,7 @@ function parseGeneratedFiles(text, repositoryRoot, options = {}) {
     }
     changes.push({
       path: resolved.relative,
-      kind: (0, import_node_fs7.existsSync)((0, import_node_path9.join)(workspace2.rootPath, resolved.relative)) ? "modify" : "create",
+      kind: (0, import_node_fs8.existsSync)((0, import_node_path10.join)(workspace2.rootPath, resolved.relative)) ? "modify" : "create",
       newContent: content.endsWith("\n") ? content : `${content}
 `,
       reason: "Generated from the approved plan; each step mapped to indexed framework symbols.",
@@ -289461,9 +289628,9 @@ function parseGeneratedFiles(text, repositoryRoot, options = {}) {
 }
 
 // packages/cli/src/validate.ts
-var import_node_fs8 = require("node:fs");
-var import_node_path10 = require("node:path");
-var import_node_child_process4 = require("node:child_process");
+var import_node_fs9 = require("node:fs");
+var import_node_path11 = require("node:path");
+var import_node_child_process5 = require("node:child_process");
 var DEFAULT_TIMEOUT_MS3 = 5 * 60 * 1e3;
 function runCommand(command, cwd, timeoutMs = DEFAULT_TIMEOUT_MS3, args) {
   const started = Date.now();
@@ -289477,7 +289644,7 @@ function runCommand(command, cwd, timeoutMs = DEFAULT_TIMEOUT_MS3, args) {
       resolve5(result);
     };
     try {
-      child = (0, import_node_child_process4.spawn)(command, args, {
+      child = (0, import_node_child_process5.spawn)(command, args, {
         cwd,
         shell: args === void 0,
         env: process.env
@@ -289541,10 +289708,10 @@ function runCommand(command, cwd, timeoutMs = DEFAULT_TIMEOUT_MS3, args) {
   });
 }
 function readScripts(repositoryRoot) {
-  const pkgPath = (0, import_node_path10.join)(repositoryRoot, "package.json");
-  if (!(0, import_node_fs8.existsSync)(pkgPath)) return {};
+  const pkgPath = (0, import_node_path11.join)(repositoryRoot, "package.json");
+  if (!(0, import_node_fs9.existsSync)(pkgPath)) return {};
   try {
-    const pkg = JSON.parse((0, import_node_fs8.readFileSync)(pkgPath, "utf-8"));
+    const pkg = JSON.parse((0, import_node_fs9.readFileSync)(pkgPath, "utf-8"));
     return pkg.scripts ?? {};
   } catch {
     return {};
@@ -289567,8 +289734,8 @@ function checkPaths(changes, repositoryRoot) {
   };
 }
 function checkUnrelatedFiles(changes, repositoryRoot) {
-  const baselinePath = (0, import_node_path10.join)(repositoryRoot, ".tcoe-testpilot", "baseline.json");
-  if (!(0, import_node_fs8.existsSync)(baselinePath)) {
+  const baselinePath = (0, import_node_path11.join)(repositoryRoot, ".tcoe-testpilot", "baseline.json");
+  if (!(0, import_node_fs9.existsSync)(baselinePath)) {
     return {
       kind: "unrelated-files",
       description: "No files outside the approved change set were modified",
@@ -289581,7 +289748,7 @@ function checkUnrelatedFiles(changes, repositoryRoot) {
   }
   let baseline;
   try {
-    baseline = JSON.parse((0, import_node_fs8.readFileSync)(baselinePath, "utf-8"));
+    baseline = JSON.parse((0, import_node_fs9.readFileSync)(baselinePath, "utf-8"));
   } catch {
     return {
       kind: "unrelated-files",
@@ -289601,7 +289768,7 @@ function checkUnrelatedFiles(changes, repositoryRoot) {
     if (!resolved) continue;
     let now;
     try {
-      now = fingerprint((0, import_node_fs8.readFileSync)(resolved.resolved, "utf-8"));
+      now = fingerprint((0, import_node_fs9.readFileSync)(resolved.resolved, "utf-8"));
     } catch {
       modified.push(`${relPath} (deleted)`);
       continue;
@@ -289651,7 +289818,7 @@ async function checkScript(kind, scriptName, command, repositoryRoot, timeoutMs)
       skipReason: `No "${scriptName}" script in package.json.`
     };
   }
-  if (isPlaywrightTest && !(0, import_node_fs8.existsSync)((0, import_node_path10.join)(repositoryRoot, "playwright.config.ts"))) {
+  if (isPlaywrightTest && !(0, import_node_fs9.existsSync)((0, import_node_path11.join)(repositoryRoot, "playwright.config.ts"))) {
     return {
       kind,
       description: `${kind}: npm run ${scriptName}`,
@@ -289689,11 +289856,11 @@ ${failureOutput}`,
 }
 async function checkPlaywrightSpecs(testPaths, repositoryRoot, timeoutMs) {
   const description = "test: Playwright spec";
-  const cliPath = (0, import_node_path10.join)(repositoryRoot, "node_modules", "@playwright", "test", "cli.js");
+  const cliPath = (0, import_node_path11.join)(repositoryRoot, "node_modules", "@playwright", "test", "cli.js");
   const specs = [...new Set(testPaths)].filter((path3) => /\.spec\.tsx?$/i.test(path3));
   const workspace2 = new Workspace(repositoryRoot);
   const resolvedSpecs = specs.map((path3) => workspace2.tryResolve(path3)?.resolved);
-  const hasPlaywrightConfig = ["ts", "mts", "js", "mjs", "cts", "cjs"].some((extension) => (0, import_node_fs8.existsSync)((0, import_node_path10.join)(repositoryRoot, `playwright.config.${extension}`)));
+  const hasPlaywrightConfig = ["ts", "mts", "js", "mjs", "cts", "cjs"].some((extension) => (0, import_node_fs9.existsSync)((0, import_node_path11.join)(repositoryRoot, `playwright.config.${extension}`)));
   if (!hasPlaywrightConfig) {
     return {
       kind: "test",
@@ -289705,7 +289872,7 @@ async function checkPlaywrightSpecs(testPaths, repositoryRoot, timeoutMs) {
       skipReason: "No Playwright config found in the repository."
     };
   }
-  if (!(0, import_node_fs8.existsSync)(cliPath)) {
+  if (!(0, import_node_fs9.existsSync)(cliPath)) {
     return {
       kind: "test",
       description,
@@ -289728,7 +289895,7 @@ async function checkPlaywrightSpecs(testPaths, repositoryRoot, timeoutMs) {
     };
   }
   const testFilters = resolvedSpecs.map(
-    (path3) => (0, import_node_path10.relative)(workspace2.rootPath, path3).replace(/\\/g, "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    (path3) => (0, import_node_path11.relative)(workspace2.rootPath, path3).replace(/\\/g, "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   );
   const args = [cliPath, "test", ...testFilters];
   const command = process.execPath;
@@ -289832,8 +289999,8 @@ function analyseFailure(report, changes, repositoryRoot) {
     }
     const anyChange = changes[0];
     if (anyChange) {
-      const abs = (0, import_node_path10.join)(repositoryRoot, anyChange.path);
-      const exists = (0, import_node_fs8.existsSync)(abs);
+      const abs = (0, import_node_path11.join)(repositoryRoot, anyChange.path);
+      const exists = (0, import_node_fs9.existsSync)(abs);
       return {
         likelyCause: "The generated code does not typecheck against the framework.",
         evidence: [
@@ -290051,20 +290218,20 @@ var WorkspaceService = class {
       await vscode.window.showErrorMessage(`Model unavailable: ${info2.unavailableReason ?? "unknown reason"}`);
       return;
     }
+    let browser;
+    let browserHost;
     try {
       const targetUrl = cfg.targetUrl || extractFirstUrl(raw);
-      let browser;
       let browseMode;
       if (targetUrl) {
-        const browserWorkingDirectory = (0, import_node_path11.join)(cfg.stateDir, "browser-cli");
-        (0, import_node_fs9.mkdirSync)(browserWorkingDirectory, { recursive: true });
+        const browserWorkingDirectory = (0, import_node_path12.join)(cfg.stateDir, "browser-cli");
+        (0, import_node_fs10.mkdirSync)(browserWorkingDirectory, { recursive: true });
+        browserHost = await IsolatedCdpBrowser.launch((0, import_node_path12.join)(cfg.stateDir, "browser-sessions"));
         browser = createBrowserSession({
           repositoryRoot: cfg.frameworkRepo,
           workingDirectory: browserWorkingDirectory,
-          // Show the primary CLI browser so interactive SSO/MFA challenges such
-          // as PingID number matching are visible while snapshots are captured.
-          // The adapter still creates a fresh, non-persistent session per run.
-          cli: { headed: true },
+          cdpEndpoint: browserHost.endpoint,
+          // The shared Chromium host is headed, private, and isolated to this run.
           mcp: {
             // Spawn only after the CLI primary fails. Use cmd.exe explicitly on Windows
             // because npm exposes npx as a .cmd shim that spawn(shell:false) cannot run.
@@ -290075,38 +290242,46 @@ var WorkspaceService = class {
         browseMode = "follow-steps";
         this.panel.postStatus(`Inspecting ${targetUrl} and following the manual steps automatically.`);
       }
-      const result = await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: "TestPilot: planning", cancellable: true },
-        async (progress, token) => {
-          const controller = new AbortController();
-          const subscription = token.onCancellationRequested(() => controller.abort());
-          try {
-            return await runAgent({
-              rawTestCase: raw,
-              repositoryRoot: cfg.frameworkRepo,
-              stateDir: cfg.stateDir,
-              config: modelConfig,
-              vscodeLmBridge: this.bridge,
-              browser,
-              targetUrl: browser ? targetUrl : void 0,
-              browseMode,
-              appName: cfg.appName,
-              signal: controller.signal,
-              onStage: (stage, status, summary) => {
-                progress.report({ message: `${stage}: ${summary ?? status}` });
-                this.panel.postStatus(`${stage}: ${summary ?? status}`);
-              },
-              onStatus: (message) => {
-                progress.report({ message });
-                this.panel.postStatus(message);
-                if (/\bMFA\b|PingID/i.test(message)) void vscode.window.showInformationMessage(message);
-              }
-            });
-          } finally {
-            subscription.dispose();
+      let result;
+      try {
+        result = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: "TestPilot: planning", cancellable: true },
+          async (progress, token) => {
+            const controller = new AbortController();
+            const subscription = token.onCancellationRequested(() => controller.abort());
+            try {
+              return await runAgent({
+                rawTestCase: raw,
+                repositoryRoot: cfg.frameworkRepo,
+                stateDir: cfg.stateDir,
+                config: modelConfig,
+                vscodeLmBridge: this.bridge,
+                browser,
+                targetUrl: browser ? targetUrl : void 0,
+                browseMode,
+                appName: cfg.appName,
+                signal: controller.signal,
+                onStage: (stage, status, summary) => {
+                  progress.report({ message: `${stage}: ${summary ?? status}` });
+                  this.panel.postStatus(`${stage}: ${summary ?? status}`);
+                },
+                onStatus: (message) => {
+                  progress.report({ message });
+                  this.panel.postStatus(message);
+                  if (/\bMFA\b|PingID/i.test(message)) void vscode.window.showInformationMessage(message);
+                }
+              });
+            } finally {
+              subscription.dispose();
+            }
           }
-        }
-      );
+        );
+      } finally {
+        await browser?.close();
+        browser = void 0;
+        await browserHost?.close();
+        browserHost = void 0;
+      }
       const task = result.task;
       const drift = verifyRepositorySnapshot(cfg.frameworkRepo, task.repositorySnapshot);
       if (drift.length > 0) throw new Error(`Repository changed during planning:
@@ -290202,6 +290377,9 @@ ${driftBeforeApply.map((reason) => `\u2022 ${reason}`).join("\n")}`);
     } catch (err) {
       this.panel.postStatus(`Planning stopped: ${this.message(err)}`);
       await vscode.window.showErrorMessage(this.message(err));
+    } finally {
+      await browser?.close();
+      await browserHost?.close();
     }
   }
   /** Pick a supported manual test case document. */
@@ -290214,8 +290392,8 @@ ${driftBeforeApply.map((reason) => `\u2022 ${reason}`).join("\n")}`);
     });
     const file = files?.[0];
     if (!file) return;
-    this.panel.setSelectedFile(file.fsPath, (0, import_node_path11.basename)(file.fsPath));
-    this.panel.postStatus(`Selected manual test case file: ${(0, import_node_path11.basename)(file.fsPath)}. Click Generate when ready.`);
+    this.panel.setSelectedFile(file.fsPath, (0, import_node_path12.basename)(file.fsPath));
+    this.panel.postStatus(`Selected manual test case file: ${(0, import_node_path12.basename)(file.fsPath)}. Click Generate when ready.`);
   }
   /** Load the current editor selection into the manual case editor. */
   async useEditorSelection() {
@@ -290478,8 +290656,8 @@ ${renderReport(task, void 0, false)}`
     }
     const evidence = [];
     const candidates = [];
-    const workingDirectory = (0, import_node_path11.join)(stateDir, "browser-mcp-repair");
-    (0, import_node_fs9.mkdirSync)(workingDirectory, { recursive: true });
+    const workingDirectory = (0, import_node_path12.join)(stateDir, "browser-mcp-repair");
+    (0, import_node_fs10.mkdirSync)(workingDirectory, { recursive: true });
     const command = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "npx";
     const serverArgs = process.platform === "win32" ? ["/d", "/s", "/c", "npx -y @playwright/mcp@latest"] : ["-y", "@playwright/mcp@latest"];
     this.panel.postStatus("Replaying the manual steps with Playwright MCP to capture fresh locator evidence\u2026");
@@ -290652,7 +290830,7 @@ ${locatorEvidence.join("\n")}`);
     if (!cfg) return;
     let tasks = [];
     try {
-      tasks = (0, import_node_fs9.readdirSync)(cfg.stateDir).filter((name) => name.endsWith(".task.json")).map((name) => loadTask(cfg.stateDir, name.slice(0, -".task.json".length))).filter((task) => task !== null).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      tasks = (0, import_node_fs10.readdirSync)(cfg.stateDir).filter((name) => name.endsWith(".task.json")).map((name) => loadTask(cfg.stateDir, name.slice(0, -".task.json".length))).filter((task) => task !== null).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     } catch {
     }
     if (tasks.length === 0) {
@@ -290684,9 +290862,9 @@ ${renderReport(selected.task, void 0, false)}`
     if (answer !== "Delete Task History") return;
     let deleted = 0;
     try {
-      for (const name of (0, import_node_fs9.readdirSync)(cfg.stateDir)) {
+      for (const name of (0, import_node_fs10.readdirSync)(cfg.stateDir)) {
         if (!/\.(task|checkpoint)\.json$/.test(name)) continue;
-        (0, import_node_fs9.unlinkSync)((0, import_node_path11.join)(cfg.stateDir, name));
+        (0, import_node_fs10.unlinkSync)((0, import_node_path12.join)(cfg.stateDir, name));
         deleted++;
       }
     } catch {
@@ -290697,7 +290875,7 @@ ${renderReport(selected.task, void 0, false)}`
     const cfg = this.config();
     if (!cfg) return;
     try {
-      const result = analyzeFramework({ repositoryRoot: cfg.frameworkRepo, indexDir: (0, import_node_path11.join)(cfg.stateDir, "index") });
+      const result = analyzeFramework({ repositoryRoot: cfg.frameworkRepo, indexDir: (0, import_node_path12.join)(cfg.stateDir, "index") });
       const document2 = await vscode.workspace.openTextDocument({ language: "markdown", content: summariseAnalysis(result) });
       await vscode.window.showTextDocument(document2, { preview: false });
       await vscode.window.showInformationMessage(`Framework index refreshed (${result.scan.files.length} source files).`);

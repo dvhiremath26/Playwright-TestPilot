@@ -25,6 +25,7 @@ export type { PlaywrightMcpAdapterOptions } from './playwright-mcp-adapter.ts'
 export { BrowserSession } from './browser-orchestrator.ts'
 export { createBrowserSession } from './browser-session-factory.ts'
 export type { CreateBrowserSessionOptions } from './browser-session-factory.ts'
+export { IsolatedCdpBrowser } from './isolated-cdp-browser.ts'
 export type {
   BackendProvenance,
   BrowserEvidence,

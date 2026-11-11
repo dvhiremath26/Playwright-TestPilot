@@ -62,6 +62,8 @@ export interface PlaywrightCliAdapterOptions {
   cwd?: string
   /** Browser channel: chrome, firefox, webkit, msedge. */
   browser?: string
+  /** Attach this CLI session to an already running isolated Chromium browser. */
+  cdpEndpoint?: string
   /** Run headed. Defaults to headless. */
   headed?: boolean
   /** Max output bytes to retain per call. Prevents memory growth on chatty pages. */
@@ -189,6 +191,7 @@ function quoteForLog(arg: string): string {
 export class PlaywrightCliAdapter implements BrowserTool {
   private readonly opts: PlaywrightCliAdapterOptions
   private sessionCreated = false
+  private attachedToExternalBrowser = false
 
   readonly info: BrowserToolInfo = {
     id: 'playwright-cli',
@@ -221,6 +224,13 @@ export class PlaywrightCliAdapter implements BrowserTool {
   }
 
   async goto(url: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    if (this.opts.cdpEndpoint && !this.attachedToExternalBrowser) {
+      const attached = await this.run(['attach', `--cdp=${this.opts.cdpEndpoint}`], options)
+      if (!attached.ok) return attached
+      this.attachedToExternalBrowser = true
+      this.sessionCreated = true
+      return this.navigate(url, options)
+    }
     // `open` both launches the session and navigates, so a single call establishes state.
     const browserArgs = this.openArgs()
     const result = await this.run(['open', url, ...browserArgs], options)
@@ -328,6 +338,12 @@ export class PlaywrightCliAdapter implements BrowserTool {
    * be made to guess whether a session existed before asking for it to go away.
    */
   async close(options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    if (this.attachedToExternalBrowser) {
+      const result = await this.run(['detach'], options)
+      this.attachedToExternalBrowser = false
+      this.sessionCreated = false
+      return result
+    }
     const result = await this.run(['close'], options)
     if (!result.ok && /no.*session|not.*open|already.*closed/i.test(result.error ?? '')) {
       return { ok: true, output: 'No open session.' }

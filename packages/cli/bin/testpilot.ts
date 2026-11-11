@@ -26,7 +26,7 @@ import type { ExcelColumnField, ExcelColumnMapping } from '@tcoe/adapters'
 import { buildConfig, safeConfigDump, validateConfig } from '@tcoe/provider-abstraction'
 import type { ProviderConfig } from '@tcoe/provider-abstraction'
 import { renderReport } from '../src/report.ts'
-import { createBrowserSession } from '@tcoe/browser-tools'
+import { createBrowserSession, IsolatedCdpBrowser } from '@tcoe/browser-tools'
 
 const DEFAULT_STATE_DIR_NAME = '.tcoe-testpilot'
 
@@ -259,22 +259,32 @@ async function main(): Promise<number> {
       const mcpArgs = typeof flags['browser-mcp-args'] === 'string'
         ? flags['browser-mcp-args'].split(/\s+/).filter(Boolean)
         : ['mcp']
+      const browserHost = browse
+        ? await IsolatedCdpBrowser.launch(join(stateDir, 'browser-sessions'))
+        : undefined
       const browser = browse
         ? createBrowserSession({
             repositoryRoot,
+            cdpEndpoint: browserHost!.endpoint,
             mcp: mcpCommand ? { command: mcpCommand, serverArgs: mcpArgs } : undefined,
           })
         : undefined
 
-      const result = await runAgent({
-        repositoryRoot,
-        rawTestCase: raw,
-        stateDir,
-        readOnly: flags['read-only'] === true,
-        config: providerOverridesFromFlags(flags),
-        browser,
-        targetUrl,
-      })
+      let result: Awaited<ReturnType<typeof runAgent>>
+      try {
+        result = await runAgent({
+          repositoryRoot,
+          rawTestCase: raw,
+          stateDir,
+          readOnly: flags['read-only'] === true,
+          config: providerOverridesFromFlags(flags),
+          browser,
+          targetUrl,
+        })
+      } finally {
+        await browser?.close()
+        await browserHost?.close()
+      }
 
       const taskPath = saveTask(stateDir, result.task)
 

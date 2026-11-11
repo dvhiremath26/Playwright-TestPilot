@@ -493,21 +493,41 @@ export async function gatherEvidenceForTestCase(
     ) => Promise<BrowserElementRef>
     /** Internal guard so a failed MCP retry cannot recursively restart forever. */
     fallbackRetry?: boolean
+    /** Resume fallback at this zero-based step index without navigating again. */
+    resumeFromStepIndex?: number
+    resumeCurrentUrl?: string
+    resumeEvidence?: BrowserEvidence[]
+    resumeLocatorCandidates?: VerifiedLocator[]
     signal?: AbortSignal
     onStatus?: (message: string) => void
   },
 ): Promise<{ evidence: BrowserEvidence[]; locatorCandidates: VerifiedLocator[] }> {
-  const evidence: BrowserEvidence[] = []
-  const locatorCandidates: VerifiedLocator[] = []
-  const navigation = await browser.navigate(options.targetUrl, { signal: options.signal })
-  if (navigation.detail.startsWith('Navigation failed:')) {
-    throw new Error(navigation.detail)
+  const evidence: BrowserEvidence[] = [...(options.resumeEvidence ?? [])]
+  const locatorCandidates: VerifiedLocator[] = [...(options.resumeLocatorCandidates ?? [])]
+  let navigation = evidence.find((item) => item.kind === 'navigation')
+  let currentUrl = options.resumeCurrentUrl ?? options.targetUrl
+  let snapshot: BrowserSnapshot
+  if (options.resumeFromStepIndex !== undefined) {
+    navigation ??= {
+      kind: 'navigation',
+      detail: `Continuing the current browser session at step ${options.resumeFromStepIndex + 1}.`,
+      source: browser.provenance ?? { backendId: 'playwright-cli', backendLabel: 'Playwright CLI', fellBack: false },
+    }
+    snapshot = await captureScreen(`Fallback attached to the current page; resuming at step ${options.resumeFromStepIndex + 1}`, currentUrl)
+  } else {
+    const opened = await browser.navigate(options.targetUrl, { signal: options.signal })
+    navigation = opened
+    if (opened.detail.startsWith('Navigation failed:')) throw new Error(opened.detail)
+    evidence.push(opened)
+    await waitForPageReady('Initial navigation')
+    snapshot = await captureScreen('Starting page', currentUrl)
   }
-  evidence.push(navigation)
-  await waitForPageReady('Initial navigation')
-
-  let currentUrl = options.targetUrl
-  let snapshot = await captureScreen('Starting page', currentUrl)
+  navigation ??= {
+    kind: 'navigation',
+    detail: 'Browser session is active.',
+    source: browser.provenance ?? { backendId: 'playwright-cli', backendLabel: 'Playwright CLI', fellBack: false },
+  }
+  const navigationSource = navigation.source
   const locatorActionSteps = options.steps.filter((step) => isLocatorAction(step.action))
 
   if (options.mode === 'start-page') {
@@ -520,8 +540,11 @@ export async function gatherEvidenceForTestCase(
     return { evidence, locatorCandidates }
   }
 
+  let nextStepIndex = options.resumeFromStepIndex ?? 0
   try {
   for (const [stepIndex, step] of options.steps.entries()) {
+    if (stepIndex < (options.resumeFromStepIndex ?? 0)) continue
+    nextStepIndex = stepIndex
     if (options.signal?.aborted) throw new Error('Browser step replay was cancelled.')
 
     if (isManualWaitStep(step.action)) {
@@ -618,7 +641,7 @@ export async function gatherEvidenceForTestCase(
               evidence.push({
                 kind: 'interaction',
                 detail: `Step ${step.order}: opened the uniquely observed Search shell-bar button to reveal the Search field required by the next manual step.`,
-                source: opened.provenance ?? browser.provenance ?? navigation.source,
+                source: opened.provenance ?? browser.provenance ?? navigationSource,
               })
             }
           }
@@ -634,8 +657,15 @@ export async function gatherEvidenceForTestCase(
       if (!matched) {
         if (!mfaNoticeSent && !options.fallbackRetry &&
             browser.activateFallback(`Playwright CLI exposed no matching control for explicit wait target "${targetDescription ?? ''}"`)) {
-          options.onStatus?.(`Playwright CLI could not expose the awaited ${targetDescription ?? 'page'} control. Restarting the manual flow with Playwright MCP to inspect it.`)
-          return gatherEvidenceForTestCase(browser, { ...options, fallbackRetry: true })
+          options.onStatus?.(`Playwright CLI could not expose the awaited ${targetDescription ?? 'page'} control. Continuing from the current page with Playwright MCP.`)
+          return gatherEvidenceForTestCase(browser, {
+            ...options,
+            fallbackRetry: true,
+            resumeFromStepIndex: stepIndex,
+            resumeCurrentUrl: currentUrl,
+            resumeEvidence: evidence,
+            resumeLocatorCandidates: locatorCandidates,
+          })
         }
         const observed = lastObservedControls.length > 0 ? ` Latest visible controls: ${lastObservedControls.join('; ')}.` : ' No named visible controls were exposed.'
         const pageContext = lastObservedPage ? ` Last observed page: ${lastObservedPage}.` : ''
@@ -647,8 +677,9 @@ export async function gatherEvidenceForTestCase(
       evidence.push({
         kind: 'snapshot',
         detail: `Step ${step.order} explicit wait completed: observed ${matched.role ?? 'element'} "${matched.name || targetDescription}" in a fresh browser snapshot before continuing.`,
-        source: browser.provenance ?? navigation.source,
+        source: browser.provenance ?? navigationSource,
       })
+      nextStepIndex = stepIndex + 1
       snapshot = await captureScreen(`After wait step ${step.order}`, currentUrl)
       continue
     }
@@ -662,10 +693,12 @@ export async function gatherEvidenceForTestCase(
             ...result,
             detail: `Step ${step.order} navigation failed: ${result.detail}`,
           })
+          nextStepIndex = stepIndex + 1
           continue
         }
         evidence.push({ ...result, detail: `Step ${step.order}: ${result.detail}` })
         currentUrl = explicitUrl
+        nextStepIndex = stepIndex + 1
         await waitForPageReady(`Step ${step.order} navigation`)
         snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl)
       }
@@ -693,7 +726,7 @@ export async function gatherEvidenceForTestCase(
         detail: observed.length > 0
           ? `Step ${step.order} assertion locator candidates were generated from matching visible text in the post-action snapshot.`
           : `Step ${step.order} assertion has no matching visible text/ref in the current snapshot; no locator was inferred.`,
-        source: browser.provenance ?? navigation.source,
+        source: browser.provenance ?? navigationSource,
       })
     } else if (!action && isLocatorAction(step.action)) {
       throw new Error(`Step ${step.order} could not be replayed safely: unsupported browser action "${step.action}". No later screen evidence was collected.`)
@@ -747,7 +780,7 @@ export async function gatherEvidenceForTestCase(
             detail: bestSnapshotScore < 0.35
               ? `Step ${step.order}: enriched generic accessibility snapshot labels with ${newElements.length} visible DOM target(s) for "${action.target}".`
               : `Step ${step.order}: supplemented the snapshot match with ${newElements.length} visible DOM target(s), including frame-scoped locator evidence for "${action.target}".`,
-            source: browser.provenance ?? navigation.source,
+            source: browser.provenance ?? navigationSource,
           })
         }
       }
@@ -899,8 +932,9 @@ export async function gatherEvidenceForTestCase(
           : recoveredFrameLocator
           ? `Step ${step.order}: refreshed frame evidence after a stale locator and succeeded with another observed matching locator: ${step.action}`
           : `Step ${step.order} replayed: ${step.action}`,
-        source: result.provenance ?? browser.provenance ?? navigation.source,
+        source: result.provenance ?? browser.provenance ?? navigationSource,
       })
+      nextStepIndex = stepIndex + 1
       const location = sidebarTrialForStep ? undefined : await browser.execute(
         (tool, callOptions) => tool.eval('() => window.location.href', undefined, callOptions),
         { signal: options.signal },
@@ -923,8 +957,15 @@ export async function gatherEvidenceForTestCase(
   } catch (error) {
     if ((error instanceof SnapshotTargetUnavailableError || error instanceof BrowserSnapshotUnavailableError) && !options.fallbackRetry) {
       if (browser.activateFallback(`The primary browser backend could not provide usable evidence: ${error.message}`)) {
-        options.onStatus?.(`The primary browser backend could not provide usable evidence. Restarting the isolated manual flow with Playwright MCP to inspect the application state.`)
-        return gatherEvidenceForTestCase(browser, { ...options, fallbackRetry: true })
+        options.onStatus?.(`The primary browser backend could not provide usable evidence. Continuing at the current page with Playwright MCP.`)
+        return gatherEvidenceForTestCase(browser, {
+          ...options,
+          fallbackRetry: true,
+          resumeFromStepIndex: nextStepIndex,
+          resumeCurrentUrl: currentUrl,
+          resumeEvidence: evidence,
+          resumeLocatorCandidates: locatorCandidates,
+        })
       }
       throw new Error(`${error.message} Playwright MCP fallback is unavailable.`)
     }
@@ -936,7 +977,7 @@ export async function gatherEvidenceForTestCase(
   async function captureScreen(label: string, pageUrl: string) {
     const observed = await browser.capture(undefined, { signal: options.signal })
     if (!observed) throw new BrowserSnapshotUnavailableError(`The active browser backend could not capture a snapshot for ${label}.`)
-    const source = browser.provenance ?? navigation.source
+    const source = browser.provenance ?? navigationSource
     const elements = observed.elements
       .slice(0, 40)
       .map((element) => `${element.role ?? 'element'}${element.name ? ` "${element.name}"` : ''} [${element.ref}]`)
@@ -1051,7 +1092,7 @@ export async function gatherEvidenceForTestCase(
           evidence.push({
             kind: 'snapshot',
             detail: `Step ${stepIndex + 1} candidate ${attempts} was confirmed because the next manual step target "${expectedNext.target}" appeared in the resulting screen.`,
-            source: browser.provenance ?? navigation.source,
+            source: browser.provenance ?? navigationSource,
           })
           return { target: candidate, result, snapshot: afterWithDom, url: observedUrl, attempt: attempts }
         }

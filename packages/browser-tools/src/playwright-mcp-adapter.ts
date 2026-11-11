@@ -420,8 +420,12 @@ export class PlaywrightMcpAdapter implements BrowserTool {
         ...(this.opts.browser ? ['--browser', this.opts.browser] : []),
         ...(this.opts.allowedHosts?.length ? ['--allowed-hosts', this.opts.allowedHosts.join(',')] : []),
       ]
-      // Never carry browser profile state between TestPilot runs.
-      if (!args.includes('--isolated')) args.push('--isolated')
+      // Server-owned browser profiles must be isolated. With CDP/extension attach,
+      // isolation is provided by TestPilot's temporary browser context instead.
+      const attachesToExistingBrowser = args.some((arg) =>
+        arg.startsWith('--cdp-endpoint') || arg === '--extension' || arg.startsWith('--extension='),
+      )
+      if (!attachesToExistingBrowser && !args.includes('--isolated')) args.push('--isolated')
 
       const child = spawn(command, args, {
         cwd: this.opts.cwd,

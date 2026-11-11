@@ -20,7 +20,7 @@ import { getProvider, type ProviderConfig, type VscodeLmBridge } from '@tcoe/pro
 import { generateChangesFromProvider, generateRepairChanges, gatherEvidenceForTestCase, runAgent } from '@tcoe/cli/runner'
 import { applyChanges, loadTask, recordStage, saveTask, snapshotRepository, verifyRepositorySnapshot } from '@tcoe/cli/apply'
 import { validate } from '@tcoe/cli/validate'
-import { BrowserSession, createBrowserSession, PlaywrightMcpAdapter } from '@tcoe/browser-tools'
+import { BrowserSession, createBrowserSession, IsolatedCdpBrowser, PlaywrightMcpAdapter } from '@tcoe/browser-tools'
 import { workbookToCsv, workbookWorksheetNames, workbookColumnHeaders, ambiguousExcelColumns } from '@tcoe/adapters'
 import type { ExcelColumnField, ExcelColumnMapping } from '@tcoe/adapters'
 import { renderReport } from '@tcoe/cli/report'
@@ -131,20 +131,20 @@ class WorkspaceService implements vscode.Disposable {
       return
     }
 
+    let browser: BrowserSession | undefined
+    let browserHost: IsolatedCdpBrowser | undefined
     try {
       const targetUrl = cfg.targetUrl || extractFirstUrl(raw)
-      let browser: BrowserSession | undefined
       let browseMode: 'start-page' | 'follow-steps' | undefined
       if (targetUrl) {
         const browserWorkingDirectory = join(cfg.stateDir, 'browser-cli')
         mkdirSync(browserWorkingDirectory, { recursive: true })
+        browserHost = await IsolatedCdpBrowser.launch(join(cfg.stateDir, 'browser-sessions'))
         browser = createBrowserSession({
           repositoryRoot: cfg.frameworkRepo,
           workingDirectory: browserWorkingDirectory,
-          // Show the primary CLI browser so interactive SSO/MFA challenges such
-          // as PingID number matching are visible while snapshots are captured.
-          // The adapter still creates a fresh, non-persistent session per run.
-          cli: { headed: true },
+          cdpEndpoint: browserHost.endpoint,
+          // The shared Chromium host is headed, private, and isolated to this run.
           mcp: {
             // Spawn only after the CLI primary fails. Use cmd.exe explicitly on Windows
             // because npm exposes npx as a .cmd shim that spawn(shell:false) cannot run.
@@ -160,7 +160,9 @@ class WorkspaceService implements vscode.Disposable {
         this.panel.postStatus(`Inspecting ${targetUrl} and following the manual steps automatically.`)
       }
 
-      const result = await vscode.window.withProgress(
+      let result: Awaited<ReturnType<typeof runAgent>>
+      try {
+        result = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: 'TestPilot: planning', cancellable: true },
         async (progress, token) => {
           const controller = new AbortController()
@@ -191,7 +193,13 @@ class WorkspaceService implements vscode.Disposable {
             subscription.dispose()
           }
         },
-      )
+        )
+      } finally {
+        await browser?.close()
+        browser = undefined
+        await browserHost?.close()
+        browserHost = undefined
+      }
 
       const task = result.task
       const drift = verifyRepositorySnapshot(cfg.frameworkRepo, task.repositorySnapshot)
@@ -287,6 +295,9 @@ class WorkspaceService implements vscode.Disposable {
     } catch (err) {
       this.panel.postStatus(`Planning stopped: ${this.message(err)}`)
       await vscode.window.showErrorMessage(this.message(err))
+    } finally {
+      await browser?.close()
+      await browserHost?.close()
     }
   }
 

@@ -287891,8 +287891,10 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
             try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
           }).find(value => typeof value === 'string' && value.trim()) || '';
           const gridCell = el.closest('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell');
-          const grid = el.closest('[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl');
+          const grid = el.closest('.sapUiTable') || el.closest('.sapMListTbl') || el.closest('[role="grid"]') || el.closest('[role="table"]') || el.closest('table');
           const gridRow = el.closest('[role="row"],tr,.sapUiTableTr,.sapMListTblRow');
+          const rowSelector = '[role="row"],tr,.sapUiTableTr,.sapMListTblRow';
+          const cellSelector = '[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell';
           let tableColumn = '';
           let tableRowIndex = -1;
           if (gridCell && grid) {
@@ -287903,10 +287905,7 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
             const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
             tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
             if (gridRow) {
-              const rows = Array.from(grid.querySelectorAll('[role="row"],tr,.sapUiTableTr,.sapMListTblRow')).filter(node => {
-                const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
-                return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-              });
+              const rows = Array.from(grid.querySelectorAll(rowSelector));
               tableRowIndex = rows.indexOf(gridRow);
             }
           }
@@ -287915,12 +287914,10 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const id = el.id || '';
           const helpId = el.getAttribute('data-help-id') || '';
           const gridClass = typeof grid?.className === 'string' ? grid.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
-          const gridOrdinal = grid ? Array.from(grid.ownerDocument.querySelectorAll('[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl')).indexOf(grid) : -1;
+          const gridSelector = grid?.matches('.sapUiTable') ? '.sapUiTable' : grid?.matches('.sapMListTbl') ? '.sapMListTbl' : grid?.matches('[role="grid"]') ? '[role="grid"]' : grid?.matches('[role="table"]') ? '[role="table"]' : 'table';
+          const gridOrdinal = grid ? Array.from(grid.ownerDocument.querySelectorAll(gridSelector)).indexOf(grid) : -1;
           const tableGridKey = grid ? String(grid.id || gridClass || grid.tagName.toLowerCase()) + ':' + gridOrdinal : '';
-          const tableCellIndex = gridCell && gridRow ? Array.from(gridRow.querySelectorAll('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell')).indexOf(gridCell) : -1;
-          const gridSelector = '[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl';
-          const rowSelector = '[role="row"],tr,.sapUiTableTr,.sapMListTblRow';
-          const cellSelector = '[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell';
+          const tableCellIndex = gridCell && gridRow ? Array.from(gridRow.querySelectorAll(cellSelector)).indexOf(gridCell) : -1;
           const tableCellExpression = gridOrdinal >= 0 && tableRowIndex >= 0 && tableCellIndex >= 0
             ? 'locator(' + JSON.stringify(gridSelector) + ').nth(' + gridOrdinal + ').locator(' + JSON.stringify(rowSelector) + ').nth(' + tableRowIndex + ').locator(' + JSON.stringify(cellSelector) + ').nth(' + tableCellIndex + ')'
             : '';
@@ -287988,8 +287985,10 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
         }).join(' ').trim();
         const associatedLabels = el.labels ? Array.from(el.labels).map((label) => label.innerText || label.textContent || '').join(' ') : '';
         const gridCell = el.closest('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell');
-        const grid = el.closest('[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl');
+        const grid = el.closest('.sapUiTable') || el.closest('.sapMListTbl') || el.closest('[role="grid"]') || el.closest('[role="table"]') || el.closest('table');
         const gridRow = el.closest('[role="row"],tr,.sapUiTableTr,.sapMListTblRow');
+        const rowSelector = '[role="row"],tr,.sapUiTableTr,.sapMListTblRow';
+        const cellSelector = '[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell';
         let tableColumn = '';
         let tableRowIndex = -1;
         if (gridCell && grid) {
@@ -288000,22 +287999,17 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
           tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
           if (gridRow) {
-            const rows = Array.from(grid.querySelectorAll('[role="row"],tr,.sapUiTableTr,.sapMListTblRow')).filter(node => {
-              const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
-              return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-            });
+            const rows = Array.from(grid.querySelectorAll(rowSelector));
             tableRowIndex = rows.indexOf(gridRow);
           }
         }
         const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || tableColumn || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
         const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
         const gridClass = typeof grid?.className === 'string' ? grid.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
-        const gridOrdinal = grid ? Array.from(grid.ownerDocument.querySelectorAll('[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl')).indexOf(grid) : -1;
+        const gridSelector = grid?.matches('.sapUiTable') ? '.sapUiTable' : grid?.matches('.sapMListTbl') ? '.sapMListTbl' : grid?.matches('[role="grid"]') ? '[role="grid"]' : grid?.matches('[role="table"]') ? '[role="table"]' : 'table';
+        const gridOrdinal = grid ? Array.from(grid.ownerDocument.querySelectorAll(gridSelector)).indexOf(grid) : -1;
         const tableGridKey = grid ? String(grid.id || gridClass || grid.tagName.toLowerCase()) + ':' + gridOrdinal : '';
-        const tableCellIndex = gridCell && gridRow ? Array.from(gridRow.querySelectorAll('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell')).indexOf(gridCell) : -1;
-        const gridSelector = '[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl';
-        const rowSelector = '[role="row"],tr,.sapUiTableTr,.sapMListTblRow';
-        const cellSelector = '[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell';
+        const tableCellIndex = gridCell && gridRow ? Array.from(gridRow.querySelectorAll(cellSelector)).indexOf(gridCell) : -1;
         const tableCellExpression = gridOrdinal >= 0 && tableRowIndex >= 0 && tableCellIndex >= 0
           ? 'locator(' + JSON.stringify(gridSelector) + ').nth(' + gridOrdinal + ').locator(' + JSON.stringify(rowSelector) + ').nth(' + tableRowIndex + ').locator(' + JSON.stringify(cellSelector) + ').nth(' + tableCellIndex + ')'
           : '';

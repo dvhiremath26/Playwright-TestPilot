@@ -287255,6 +287255,7 @@ async function gatherEvidenceForTestCase(browser, options) {
   }
   let nextStepIndex = options.resumeFromStepIndex ?? 0;
   const tableRowCursors = /* @__PURE__ */ new Map();
+  const snapshotTableRowCursors = /* @__PURE__ */ new Map();
   try {
     for (const [stepIndex, step] of options.steps.entries()) {
       if (stepIndex < (options.resumeFromStepIndex ?? 0)) continue;
@@ -287457,7 +287458,9 @@ async function gatherEvidenceForTestCase(browser, options) {
           }
         }
         const tableCellTarget = action.kind === "fill" ? selectNextEmptyTableCell(domElements, action.target, tableRowCursors) : void 0;
+        const snapshotTableSelection = action.kind === "fill" && !tableCellTarget ? selectRepeatedTableSnapshotTarget(snapshot, compatibleTargets, action.target, snapshotTableRowCursors) : void 0;
         if (tableCellTarget) compatibleTargets = [tableCellTarget];
+        else if (snapshotTableSelection) compatibleTargets = [snapshotTableSelection.element];
         if (compatibleTargets.length === 0) {
           for (let retry = 0; retry < 6 && compatibleTargets.length === 0; retry++) {
             if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
@@ -287476,7 +287479,11 @@ async function gatherEvidenceForTestCase(browser, options) {
         }
         let preActionSnapshot = snapshot;
         let target;
-        if (options.selectSnapshotTarget) {
+        if (tableCellTarget) {
+          target = tableCellTarget;
+        } else if (snapshotTableSelection) {
+          target = snapshotTableSelection.element;
+        } else if (options.selectSnapshotTarget) {
           try {
             target = await options.selectSnapshotTarget(step.action, action.kind, compatibleTargets, options.signal);
           } catch (error) {
@@ -287593,6 +287600,9 @@ async function gatherEvidenceForTestCase(browser, options) {
               rowIndex: target.tableRowIndex,
               columnName: target.tableColumnName
             });
+          }
+          if (action.kind === "fill" && snapshotTableSelection) {
+            recordSnapshotTableFill(snapshotTableSelection, snapshotTableRowCursors);
           }
           locatorCandidates.push(...await candidatesForStep(
             preActionSnapshot,
@@ -288180,6 +288190,28 @@ function selectNextEmptyTableCell(elements, requestedTarget, cursors) {
   const sameColumn = normalizeWords(cursor.columnName) === normalizeWords(rows[0]?.tableColumnName ?? "");
   if (sameColumn) return rows.find((element) => element.tableRowIndex > cursor.rowIndex);
   return rows.find((element) => element.tableRowIndex === cursor.rowIndex) ?? rows.find((element) => element.tableRowIndex > cursor.rowIndex);
+}
+function selectRepeatedTableSnapshotTarget(snapshot, candidates, requestedTarget, cursors) {
+  if (!/\b(?:column|table)\b/i.test(requestedTarget)) return void 0;
+  const wantedColumn = normalizeWords(requestedTarget).replace(/\b(?:enter|type|fill|input|into|the|column|table|field|textbox|text box)\b/g, " ").replace(/\s+/g, " ").trim();
+  if (!wantedColumn) return void 0;
+  const matches = candidates.filter((candidate) => {
+    if (!/^(?:textbox|combobox|spinbutton|gridcell)$/i.test(candidate.role ?? "")) return false;
+    const name = normalizeWords(candidate.name ?? "");
+    const context = normalizeWords(candidate.context ?? "");
+    return name === wantedColumn || context.split("|").some((part) => part.trim() === wantedColumn);
+  });
+  if (matches.length < 2) return void 0;
+  const first = matches[0];
+  const key = `${normalizeWords(first.role ?? "")}:${wantedColumn}`;
+  const nextIndex = cursors.get(key)?.index ?? 0;
+  const element = matches[nextIndex];
+  if (!element) return void 0;
+  if (!snapshot.elements.some((item) => item.ref === element.ref)) return void 0;
+  return { element, key, index: nextIndex };
+}
+function recordSnapshotTableFill(selection, cursors) {
+  cursors.set(selection.key, { index: selection.index + 1 });
 }
 function textMatchScore(candidate, wanted) {
   if (!candidate || !wanted) return 0;

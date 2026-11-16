@@ -542,6 +542,7 @@ export async function gatherEvidenceForTestCase(
 
   let nextStepIndex = options.resumeFromStepIndex ?? 0
   const tableRowCursors = new Map<string, { rowIndex: number; columnName: string }>()
+  const snapshotTableRowCursors = new Map<string, SnapshotTableCursor>()
   try {
   for (const [stepIndex, step] of options.steps.entries()) {
     if (stepIndex < (options.resumeFromStepIndex ?? 0)) continue
@@ -788,7 +789,11 @@ export async function gatherEvidenceForTestCase(
       const tableCellTarget = action.kind === 'fill'
         ? selectNextEmptyTableCell(domElements, action.target, tableRowCursors)
         : undefined
+      const snapshotTableSelection = action.kind === 'fill' && !tableCellTarget
+        ? selectRepeatedTableSnapshotTarget(snapshot, compatibleTargets, action.target, snapshotTableRowCursors)
+        : undefined
       if (tableCellTarget) compatibleTargets = [tableCellTarget]
+      else if (snapshotTableSelection) compatibleTargets = [snapshotTableSelection.element]
       // Enterprise apps often finish an SSO redirect or client-side menu render
       // shortly after the click command returns. Give the current page a brief,
       // bounded chance to expose the next screen before declaring that its
@@ -811,7 +816,14 @@ export async function gatherEvidenceForTestCase(
       }
       let preActionSnapshot = snapshot
       let target: BrowserElementRef | undefined
-      if (options.selectSnapshotTarget) {
+      if (tableCellTarget) {
+        target = tableCellTarget
+      } else if (snapshotTableSelection) {
+        // MCP snapshots sometimes expose repeated SAP grid textboxes without row
+        // context. The explicit column heading plus the live grid snapshot makes
+        // row-order selection deterministic, so don't ask the model to guess.
+        target = snapshotTableSelection.element
+      } else if (options.selectSnapshotTarget) {
         try {
           target = await options.selectSnapshotTarget(step.action, action.kind, compatibleTargets, options.signal)
         } catch (error) {
@@ -940,6 +952,9 @@ export async function gatherEvidenceForTestCase(
             rowIndex: target.tableRowIndex,
             columnName: target.tableColumnName,
           })
+        }
+        if (action.kind === 'fill' && snapshotTableSelection) {
+          recordSnapshotTableFill(snapshotTableSelection, snapshotTableRowCursors)
         }
         locatorCandidates.push(...await candidatesForStep(
           preActionSnapshot,
@@ -1678,6 +1693,68 @@ function selectNextEmptyTableCell(
   if (sameColumn) return rows.find((element) => element.tableRowIndex! > cursor.rowIndex)
   return rows.find((element) => element.tableRowIndex === cursor.rowIndex) ??
     rows.find((element) => element.tableRowIndex! > cursor.rowIndex)
+}
+
+interface SnapshotTableCursor {
+  /** Position within repeated, identically named cells, preserving snapshot row order. */
+  index: number
+}
+
+interface SnapshotTableSelection {
+  element: BrowserElementRef
+  key: string
+  index: number
+}
+
+/**
+ * MCP snapshots for SAP grids often expose every editable cell as a textbox with
+ * the same accessible name (for example, eight textboxes named "Material").
+ * When the manual step explicitly targets a table column, use the first matching
+ * snapshot element in document order, then advance through that same column on
+ * later fills. This keeps matching deterministic without asking the model to
+ * choose among indistinguishable cells.
+ */
+function selectRepeatedTableSnapshotTarget(
+  snapshot: BrowserSnapshot,
+  candidates: BrowserElementRef[],
+  requestedTarget: string,
+  cursors: Map<string, SnapshotTableCursor>,
+): SnapshotTableSelection | undefined {
+  if (!/\b(?:column|table)\b/i.test(requestedTarget)) return undefined
+
+  const wantedColumn = normalizeWords(requestedTarget)
+    .replace(/\b(?:enter|type|fill|input|into|the|column|table|field|textbox|text box)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!wantedColumn) return undefined
+
+  // Keep the snapshot's original order; findActionTargets sorts equal scores
+  // stably, so candidates retain row order for repeated accessible names.
+  const matches = candidates.filter((candidate) => {
+    if (!/^(?:textbox|combobox|spinbutton|gridcell)$/i.test(candidate.role ?? '')) return false
+    const name = normalizeWords(candidate.name ?? '')
+    const context = normalizeWords(candidate.context ?? '')
+    return name === wantedColumn || context.split('|').some((part) => part.trim() === wantedColumn)
+  })
+  if (matches.length < 2) return undefined
+
+  const first = matches[0]!
+  const key = `${normalizeWords(first.role ?? '')}:${wantedColumn}`
+  const nextIndex = cursors.get(key)?.index ?? 0
+  const element = matches[nextIndex]
+  if (!element) return undefined
+  // The snapshot argument is intentionally part of this API: refs must still be
+  // present in the fresh snapshot being acted on, rather than carried from an
+  // earlier page state.
+  if (!snapshot.elements.some((item) => item.ref === element.ref)) return undefined
+  return { element, key, index: nextIndex }
+}
+
+function recordSnapshotTableFill(
+  selection: SnapshotTableSelection,
+  cursors: Map<string, SnapshotTableCursor>,
+): void {
+  cursors.set(selection.key, { index: selection.index + 1 })
 }
 
 function textMatchScore(candidate: string, wanted: string): number {

@@ -287558,7 +287558,7 @@ async function gatherEvidenceForTestCase(browser, options) {
           result = await executeActionTarget(target);
         }
         let recoveredFrameLocator = false;
-        if (!result.ok && isSafeLocatorNoMatch(result.error)) {
+        if (!result.ok && (isSafeLocatorNoMatch(result.error) || isStaleSnapshotRef(result.error))) {
           const refreshed = await browser.capture(void 0, { signal: options.signal });
           if (refreshed) {
             snapshot = refreshed;
@@ -287569,14 +287569,16 @@ async function gatherEvidenceForTestCase(browser, options) {
               const additions = refreshedDom.filter((element) => !refs.has(element.ref));
               if (additions.length > 0) snapshot = { ...snapshot, elements: [...snapshot.elements, ...additions] };
             }
-            const attempted = /* @__PURE__ */ new Set([target.locatorExpression ?? target.ref]);
-            const retryTargets = findActionTargets(
+            const attempted = isStaleSnapshotRef(result.error) ? /* @__PURE__ */ new Set() : /* @__PURE__ */ new Set([target.locatorExpression ?? target.ref]);
+            const refreshedCandidates = findActionTargets(
               snapshot,
               action.target,
               action.kind,
               action.kind === "click" && Boolean(action.intent),
               isSearchTarget(action.target)
-            ).filter((candidate) => candidate.score >= 0.75).map((candidate) => candidate.element).filter((candidate) => {
+            );
+            const refreshedTableSelection = action.kind === "fill" ? selectRepeatedTableSnapshotTarget(snapshot, refreshedCandidates.map((candidate) => candidate.element), action.target, snapshotTableRowCursors) : void 0;
+            const retryTargets = (refreshedTableSelection ? [{ element: refreshedTableSelection.element, score: 1 }] : refreshedCandidates).filter((candidate) => candidate.score >= 0.75).map((candidate) => candidate.element).filter((candidate) => {
               const expression = candidate.locatorExpression ?? candidate.ref;
               if (attempted.has(expression)) return false;
               attempted.add(expression);
@@ -287590,7 +287592,7 @@ async function gatherEvidenceForTestCase(browser, options) {
                 recoveredFrameLocator = true;
                 break;
               }
-              if (!isSafeLocatorNoMatch(result.error)) break;
+              if (!isSafeLocatorNoMatch(result.error) && !isStaleSnapshotRef(result.error)) break;
             }
           }
         }
@@ -288229,6 +288231,9 @@ function isMcpToolCallTimeout(error) {
 }
 function isSafeLocatorNoMatch(error) {
   return Boolean(error && !/click action done/i.test(error) && /does not match any elements|no element(?:s)? matched|resolved to no elements|no element found/i.test(error));
+}
+function isStaleSnapshotRef(error) {
+  return Boolean(error && /ref .+ not found in the current page snapshot|ref .+ not found.*snapshot|try capturing new snapshot/i.test(error));
 }
 function parseSnapshotTargetSelection(text) {
   const normalized = text.trim().replace(/^```(?:json)?\s*|\s*```$/gi, "").trim();

@@ -903,10 +903,11 @@ export async function gatherEvidenceForTestCase(
         result = await executeActionTarget(target)
       }
       let recoveredFrameLocator = false
-      if (!result.ok && isSafeLocatorNoMatch(result.error)) {
+      if (!result.ok && (isSafeLocatorNoMatch(result.error) || isStaleSnapshotRef(result.error))) {
         // Iframe indices and transient SAP container names can change between
-        // snapshot selection and the actual action. Refresh the DOM evidence and
-        // retry only other visible, high-confidence matches for the same target.
+        // snapshot selection and the actual action. MCP/CLI refs can also expire
+        // after SAP rerenders a table. Refresh the evidence and retry only targets
+        // grounded in the new snapshot; never replay a ref from the old snapshot.
         const refreshed = await browser.capture(undefined, { signal: options.signal })
         if (refreshed) {
           snapshot = refreshed
@@ -917,14 +918,22 @@ export async function gatherEvidenceForTestCase(
             const additions = refreshedDom.filter((element) => !refs.has(element.ref))
             if (additions.length > 0) snapshot = { ...snapshot, elements: [...snapshot.elements, ...additions] }
           }
-          const attempted = new Set([target.locatorExpression ?? target.ref])
-          const retryTargets = findActionTargets(
+          const attempted = isStaleSnapshotRef(result.error)
+            ? new Set<string>()
+            : new Set([target.locatorExpression ?? target.ref])
+          const refreshedCandidates = findActionTargets(
             snapshot,
             action.target,
             action.kind,
             action.kind === 'click' && Boolean(action.intent),
             isSearchTarget(action.target),
           )
+          const refreshedTableSelection = action.kind === 'fill'
+            ? selectRepeatedTableSnapshotTarget(snapshot, refreshedCandidates.map((candidate) => candidate.element), action.target, snapshotTableRowCursors)
+            : undefined
+          const retryTargets = (refreshedTableSelection
+            ? [{ element: refreshedTableSelection.element, score: 1 }]
+            : refreshedCandidates)
             .filter((candidate) => candidate.score >= 0.75)
             .map((candidate) => candidate.element)
             .filter((candidate) => {
@@ -942,7 +951,7 @@ export async function gatherEvidenceForTestCase(
               recoveredFrameLocator = true
               break
             }
-            if (!isSafeLocatorNoMatch(result.error)) break
+            if (!isSafeLocatorNoMatch(result.error) && !isStaleSnapshotRef(result.error)) break
           }
         }
       }
@@ -1786,6 +1795,11 @@ function isMcpToolCallTimeout(error: string | undefined): boolean {
 function isSafeLocatorNoMatch(error: string | undefined): boolean {
   return Boolean(error && !/click action done/i.test(error) &&
     /does not match any elements|no element(?:s)? matched|resolved to no elements|no element found/i.test(error))
+}
+
+/** True when a backend ref expired after the page rerendered since its snapshot. */
+function isStaleSnapshotRef(error: string | undefined): boolean {
+  return Boolean(error && /ref .+ not found in the current page snapshot|ref .+ not found.*snapshot|try capturing new snapshot/i.test(error))
 }
 
 type ReplayAction =

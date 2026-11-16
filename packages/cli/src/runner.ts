@@ -541,6 +541,7 @@ export async function gatherEvidenceForTestCase(
   }
 
   let nextStepIndex = options.resumeFromStepIndex ?? 0
+  const tableRowCursors = new Map<string, { rowIndex: number; columnName: string }>()
   try {
   for (const [stepIndex, step] of options.steps.entries()) {
     if (stepIndex < (options.resumeFromStepIndex ?? 0)) continue
@@ -784,6 +785,10 @@ export async function gatherEvidenceForTestCase(
           })
         }
       }
+      const tableCellTarget = action.kind === 'fill'
+        ? selectNextEmptyTableCell(domElements, action.target, tableRowCursors)
+        : undefined
+      if (tableCellTarget) compatibleTargets = [tableCellTarget]
       // Enterprise apps often finish an SSO redirect or client-side menu render
       // shortly after the click command returns. Give the current page a brief,
       // bounded chance to expose the next screen before declaring that its
@@ -846,7 +851,45 @@ export async function gatherEvidenceForTestCase(
         },
         { signal: options.signal },
       )
-      let result = sidebarTrialForStep?.result ?? await executeActionTarget(target)
+      let result: Awaited<ReturnType<typeof browser.execute>>
+      if (sidebarTrialForStep) {
+        result = sidebarTrialForStep.result
+      } else if (action.kind === 'fill' && target.role === 'gridcell') {
+        const activated = await browser.execute(
+          (tool, callOptions) => tool.click(target!.locatorExpression ?? target!.ref, callOptions),
+          { signal: options.signal },
+        )
+        if (!activated.ok) {
+          result = activated
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 250))
+          const refreshedSnapshot = await browser.capture(undefined, { signal: options.signal })
+          const activatedDom = await inspectVisibleDomTargets(browser, action.target, options.signal)
+          const editor = activatedDom.find((candidate) =>
+            candidate.tableField && candidate.role !== 'gridcell' &&
+            candidate.tableGridKey === target!.tableGridKey &&
+            candidate.tableRowIndex === target!.tableRowIndex &&
+            normalizeWords(candidate.tableColumnName ?? '') === normalizeWords(target!.tableColumnName ?? '') &&
+            candidate.tableCellValue === '',
+          )
+          if (refreshedSnapshot) {
+            const existingRefs = new Set(refreshedSnapshot.elements.map((element) => element.ref))
+            snapshot = {
+              ...refreshedSnapshot,
+              elements: [...refreshedSnapshot.elements, ...activatedDom.filter((element) => !existingRefs.has(element.ref))],
+            }
+            preActionSnapshot = snapshot
+          }
+          if (!editor) {
+            result = { ...activated, ok: false, error: `The ${target.tableColumnName ?? 'table'} cell was opened, but SAP did not expose an editable control in row ${Number(target.tableRowIndex) + 1}.` }
+          } else {
+            target = editor
+            result = await executeActionTarget(editor)
+          }
+        }
+      } else {
+        result = await executeActionTarget(target)
+      }
       let recoveredFrameLocator = false
       if (!result.ok && isSafeLocatorNoMatch(result.error)) {
         // Iframe indices and transient SAP container names can change between
@@ -892,6 +935,12 @@ export async function gatherEvidenceForTestCase(
         }
       }
       if (result.ok && !sidebarTrialForStep) {
+        if (action.kind === 'fill' && target.tableField && target.tableGridKey && target.tableColumnName && target.tableRowIndex !== undefined) {
+          tableRowCursors.set(target.tableGridKey, {
+            rowIndex: target.tableRowIndex,
+            columnName: target.tableColumnName,
+          })
+        }
         locatorCandidates.push(...await candidatesForStep(
           preActionSnapshot,
           step.order,
@@ -975,8 +1024,15 @@ export async function gatherEvidenceForTestCase(
   return { evidence, locatorCandidates }
 
   async function captureScreen(label: string, pageUrl: string) {
-    const observed = await browser.capture(undefined, { signal: options.signal })
-    if (!observed) throw new BrowserSnapshotUnavailableError(`The active browser backend could not capture a snapshot for ${label}.`)
+    let observed: BrowserSnapshot | undefined
+    for (let attempt = 0; attempt < 3 && !observed; attempt++) {
+      observed = await browser.capture(undefined, { signal: options.signal, timeoutMs: 20_000 })
+      if (!observed && attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750))
+    }
+    if (!observed) {
+      const cause = browser.lastBackendFailure ? ` Backend detail: ${browser.lastBackendFailure}` : ''
+      throw new BrowserSnapshotUnavailableError(`The active browser backend could not capture a snapshot for ${label} after 3 attempts.${cause}`)
+    }
     const source = browser.provenance ?? navigationSource
     const elements = observed.elements
       .slice(0, 40)
@@ -1166,7 +1222,7 @@ async function inspectVisibleDomTargets(
   // The old page.evaluate path below is limited to the main document and would miss
   // the common SAP/Fiori case where the shell is visible but the active form is framed.
   const frameInspection = await browser.runCode(`async page => {
-    const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-input,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSFF,.sapMSF,.sapMSearchField';
+    const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell,[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-input,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSFF,.sapMSF,.sapMSearchField';
     const results = [];
     const frames = page.frames();
     for (const frame of frames.slice(1, 41)) {
@@ -1222,7 +1278,8 @@ async function inspectVisibleDomTargets(
           const classes = typeof el.className === 'string' ? el.className : '';
           const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : (el.getAttribute('type') || '').toLowerCase();
           const searchField = inputType === 'search' || /sapMSFI|sapMSFF|sapMSF|sapMSearchField|ui5-search/i.test(classes + ' ' + tag) || Boolean(el.closest('.sapMSF,.sapMSearchField,ui5-search,[data-search-field="true"]'));
-          const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' || tag === 'ui5-input' ? 'textbox' : el.isContentEditable ? 'textbox' : 'generic');
+          const isTableCell = Boolean(el.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
+          const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' || tag === 'ui5-input' ? 'textbox' : el.isContentEditable ? 'textbox' : isTableCell ? 'gridcell' : 'generic');
           const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
           const control = core && el.id ? core.byId(el.id) : undefined;
           const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
@@ -1237,12 +1294,44 @@ async function inspectVisibleDomTargets(
           const ui5Name = ['getAccessibleName','getAriaLabel','getPlaceholder','getTooltip','getTitle','getText'].map(method => {
             try { return control && typeof control[method] === 'function' ? control[method]() : ''; } catch { return ''; }
           }).find(value => typeof value === 'string' && value.trim()) || '';
-          const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+          const gridCell = el.closest('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell');
+          const grid = el.closest('[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl');
+          const gridRow = el.closest('[role="row"],tr,.sapUiTableTr,.sapMListTblRow');
+          let tableColumn = '';
+          let tableRowIndex = -1;
+          if (gridCell && grid) {
+            const ariaColumn = Number(gridCell.getAttribute('aria-colindex'));
+            const siblingCells = Array.from(gridCell.parentElement?.children || []).filter(node => node.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
+            const columnIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
+            const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
+            const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
+            tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
+            if (gridRow) {
+              const rows = Array.from(grid.querySelectorAll('[role="row"],tr,.sapUiTableTr,.sapMListTblRow')).filter(node => {
+                const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
+                return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+              });
+              tableRowIndex = rows.indexOf(gridRow);
+            }
+          }
+          const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || tableColumn || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
           const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
           const id = el.id || '';
           const helpId = el.getAttribute('data-help-id') || '';
-          const context = [el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || ''), controlType].filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 180);
-          return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), helpId, uniqueHelpId: Boolean(helpId && helpIdCounts.get(helpId) === 1), searchButton, context, navigation: Boolean(nav) };
+          const gridClass = typeof grid?.className === 'string' ? grid.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
+          const gridOrdinal = grid ? Array.from(grid.ownerDocument.querySelectorAll('[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl')).indexOf(grid) : -1;
+          const tableGridKey = grid ? String(grid.id || gridClass || grid.tagName.toLowerCase()) + ':' + gridOrdinal : '';
+          const tableCellIndex = gridCell && gridRow ? Array.from(gridRow.querySelectorAll('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell')).indexOf(gridCell) : -1;
+          const gridSelector = '[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl';
+          const rowSelector = '[role="row"],tr,.sapUiTableTr,.sapMListTblRow';
+          const cellSelector = '[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell';
+          const tableCellExpression = gridOrdinal >= 0 && tableRowIndex >= 0 && tableCellIndex >= 0
+            ? 'locator(' + JSON.stringify(gridSelector) + ').nth(' + gridOrdinal + ').locator(' + JSON.stringify(rowSelector) + ').nth(' + tableRowIndex + ').locator(' + JSON.stringify(cellSelector) + ').nth(' + tableCellIndex + ')'
+            : '';
+          const nestedEditor = gridCell?.querySelector('input,textarea,select,[contenteditable="true"]');
+          const tableCellValue = typeof el.value === 'string' ? el.value : nestedEditor && typeof nestedEditor.value === 'string' ? nestedEditor.value : isTableCell ? (el.innerText || el.textContent || '') : el.isContentEditable ? (el.innerText || el.textContent || '') : '';
+          const context = [tableColumn, el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || ''), controlType].filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 180);
+          return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), helpId, uniqueHelpId: Boolean(helpId && helpIdCounts.get(helpId) === 1), searchButton, tableField: Boolean(tableColumn && (role === 'textbox' || role === 'combobox' || role === 'gridcell')), tableGridKey, tableColumnName: tableColumn, tableRowIndex, tableCellValue, tableCellExpression, context, navigation: Boolean(nav) };
         });
       }, selector);
       const searchboxes = rows.filter(row => row.role === 'searchbox').length;
@@ -1261,7 +1350,7 @@ async function inspectVisibleDomTargets(
 
   const inspected = await browser.execute(
     (tool, callOptions) => tool.eval(`() => {
-      const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-input,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSFF,.sapMSF,.sapMSearchField';
+      const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell,[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-input,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSFF,.sapMSF,.sapMSearchField';
       const allowUnnamedSearch = ${isSearchTarget(requestedTarget)};
       const roots = [document];
       for (let index = 0; index < roots.length && index < 40; index++) {
@@ -1286,7 +1375,8 @@ async function inspectVisibleDomTargets(
         const classes = typeof el.className === 'string' ? el.className : '';
         const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : (el.getAttribute('type') || '').toLowerCase();
         const searchField = inputType === 'search' || /sapMSFI|sapMSFF|sapMSF|sapMSearchField|ui5-search/i.test(classes + ' ' + tag) || Boolean(el.closest('.sapMSF,.sapMSearchField,ui5-search,[data-search-field="true"]'));
-        const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' || tag === 'ui5-input' ? 'textbox' : el.isContentEditable ? 'textbox' : 'generic');
+        const isTableCell = Boolean(el.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
+        const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' || tag === 'ui5-input' ? 'textbox' : el.isContentEditable ? 'textbox' : isTableCell ? 'gridcell' : 'generic');
         const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
         const control = core && el.id ? core.byId(el.id) : undefined;
         const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
@@ -1302,11 +1392,43 @@ async function inspectVisibleDomTargets(
           return label ? (label.innerText || label.textContent || '') : '';
         }).join(' ').trim();
         const associatedLabels = el.labels ? Array.from(el.labels).map((label) => label.innerText || label.textContent || '').join(' ') : '';
-        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+        const gridCell = el.closest('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell');
+        const grid = el.closest('[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl');
+        const gridRow = el.closest('[role="row"],tr,.sapUiTableTr,.sapMListTblRow');
+        let tableColumn = '';
+        let tableRowIndex = -1;
+        if (gridCell && grid) {
+          const ariaColumn = Number(gridCell.getAttribute('aria-colindex'));
+          const siblingCells = Array.from(gridCell.parentElement?.children || []).filter(node => node.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
+          const columnIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
+          const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
+          const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
+          tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
+          if (gridRow) {
+            const rows = Array.from(grid.querySelectorAll('[role="row"],tr,.sapUiTableTr,.sapMListTblRow')).filter(node => {
+              const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
+              return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            });
+            tableRowIndex = rows.indexOf(gridRow);
+          }
+        }
+        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || tableColumn || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
         const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
+        const gridClass = typeof grid?.className === 'string' ? grid.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
+        const gridOrdinal = grid ? Array.from(grid.ownerDocument.querySelectorAll('[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl')).indexOf(grid) : -1;
+        const tableGridKey = grid ? String(grid.id || gridClass || grid.tagName.toLowerCase()) + ':' + gridOrdinal : '';
+        const tableCellIndex = gridCell && gridRow ? Array.from(gridRow.querySelectorAll('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell')).indexOf(gridCell) : -1;
+        const gridSelector = '[role="grid"],[role="table"],table,.sapUiTable,.sapMListTbl';
+        const rowSelector = '[role="row"],tr,.sapUiTableTr,.sapMListTblRow';
+        const cellSelector = '[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell';
+        const tableCellExpression = gridOrdinal >= 0 && tableRowIndex >= 0 && tableCellIndex >= 0
+          ? 'locator(' + JSON.stringify(gridSelector) + ').nth(' + gridOrdinal + ').locator(' + JSON.stringify(rowSelector) + ').nth(' + tableRowIndex + ').locator(' + JSON.stringify(cellSelector) + ').nth(' + tableCellIndex + ')'
+          : '';
+        const nestedEditor = gridCell?.querySelector('input,textarea,select,[contenteditable="true"]');
+        const tableCellValue = typeof el.value === 'string' ? el.value : nestedEditor && typeof nestedEditor.value === 'string' ? nestedEditor.value : isTableCell ? (el.innerText || el.textContent || '') : el.isContentEditable ? (el.innerText || el.textContent || '') : '';
         const parentTexts = [el.parentElement, el.parentElement && el.parentElement.parentElement].filter(Boolean).map((parent) => (parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean);
-        const context = [...new Set([parentTexts[0], parentTexts[1], controlType].filter(Boolean))].join(' | ').slice(0, 180);
-        return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), searchButton, context, navigation: Boolean(nav) };
+        const context = [...new Set([tableColumn, parentTexts[0], parentTexts[1], controlType].filter(Boolean))].join(' | ').slice(0, 180);
+        return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), searchButton, tableField: Boolean(tableColumn && (role === 'textbox' || role === 'combobox' || role === 'gridcell')), tableGridKey, tableColumnName: tableColumn, tableRowIndex, tableCellValue, tableCellExpression, context, navigation: Boolean(nav) };
       }).filter((item) => (item.name && (item.name.length > 1 || item.navigation)) || (allowUnnamedSearch && item.role === 'searchbox') || (allowUnnamedSearch && item.searchButton && item.uniqueId)).slice(0, 160);
     }`, undefined, callOptions),
     { signal },
@@ -1340,29 +1462,33 @@ async function inspectVisibleDomTargets(
     // a unique id, identical role/name matches remain ambiguous and are excluded.
     if (duplicateName && !row.uniqueId) return []
     const unnamedUniqueSearchbox = isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.name && searchboxCount === 1
-    const useObservedId = duplicateName || row.searchButton ||
+    const useObservedId = duplicateName || row.searchButton || row.tableField ||
       (isSearchTarget(requestedTarget) && row.role === 'searchbox' && searchboxCount > 1 && row.id && row.uniqueId) ||
       (includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35)
     const css = row.id ? `[id=${JSON.stringify(row.id)}]` : undefined
-    const expression = useObservedId && css
+    const expression = row.role === 'gridcell' && row.tableCellExpression
+      ? row.tableCellExpression
+      : useObservedId && css
       ? `locator(${JSON.stringify(css)})`
       : unnamedUniqueSearchbox
       ? `getByRole("searchbox")`
       : row.role && row.role !== 'generic'
       ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })`
       : `getByText(${JSON.stringify(row.name)}, { exact: true })`
-    const selector = useObservedId && css
+    const selector = row.role === 'gridcell' && row.tableCellExpression
+      ? row.tableCellExpression
+      : useObservedId && css
       ? `css=${css}`
       : unnamedUniqueSearchbox
       ? 'role=searchbox'
       : row.role && row.role !== 'generic'
       ? `role=${row.role}[name=${JSON.stringify(row.name)}]`
       : `text=${JSON.stringify(row.name)}`
-    return [{ ref: selector, role: row.role, name: row.name, actionable: true, locatorExpression: expression, context: row.context, navigation: row.navigation }]
+    return [{ ref: selector, role: row.role, name: row.name, actionable: true, locatorExpression: expression, context: row.context, navigation: row.navigation, tableField: row.tableField, tableGridKey: row.tableGridKey, tableColumnName: row.tableColumnName, tableRowIndex: row.tableRowIndex, tableCellValue: row.tableCellValue, tableCellExpression: row.tableCellExpression }]
   })
 }
 
-function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: string; id?: string; uniqueId?: boolean; searchButton?: boolean; context?: string; navigation?: boolean }> {
+function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: string; id?: string; uniqueId?: boolean; searchButton?: boolean; tableField?: boolean; tableGridKey?: string; tableColumnName?: string; tableRowIndex?: number; tableCellValue?: string; tableCellExpression?: string; context?: string; navigation?: boolean }> {
   const start = output.indexOf('[')
   const end = output.lastIndexOf(']')
   if (start < 0 || end <= start) return []
@@ -1371,7 +1497,7 @@ function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: str
     if (!Array.isArray(value)) return []
     return value.flatMap((item) => {
       if (!item || typeof item !== 'object') return []
-      const row = item as { role?: unknown; name?: unknown; id?: unknown; uniqueId?: unknown; searchButton?: unknown; context?: unknown; navigation?: unknown }
+      const row = item as { role?: unknown; name?: unknown; id?: unknown; uniqueId?: unknown; searchButton?: unknown; tableField?: unknown; tableGridKey?: unknown; tableColumnName?: unknown; tableRowIndex?: unknown; tableCellValue?: unknown; tableCellExpression?: unknown; context?: unknown; navigation?: unknown }
       const role = typeof row.role === 'string' ? row.role : undefined
       const name = typeof row.name === 'string' ? row.name.trim() : ''
       if (!name && role !== 'searchbox') return []
@@ -1381,6 +1507,12 @@ function parseEvaluatedDomRows(output: string): Array<{ role?: string; name: str
         id: typeof row.id === 'string' ? row.id : undefined,
         uniqueId: row.uniqueId === true,
         searchButton: row.searchButton === true,
+        tableField: row.tableField === true,
+        tableGridKey: typeof row.tableGridKey === 'string' ? row.tableGridKey : undefined,
+        tableColumnName: typeof row.tableColumnName === 'string' ? row.tableColumnName : undefined,
+        tableRowIndex: typeof row.tableRowIndex === 'number' && row.tableRowIndex >= 0 ? row.tableRowIndex : undefined,
+        tableCellValue: typeof row.tableCellValue === 'string' ? row.tableCellValue : undefined,
+        tableCellExpression: typeof row.tableCellExpression === 'string' ? row.tableCellExpression : undefined,
         context: typeof row.context === 'string' ? row.context : undefined,
         navigation: row.navigation === true,
       }]
@@ -1397,6 +1529,12 @@ interface FrameDomRow {
   uniqueId?: boolean
   uniqueSearchbox?: boolean
   searchButton?: boolean
+  tableField?: boolean
+  tableGridKey?: string
+  tableColumnName?: string
+  tableRowIndex?: number
+  tableCellValue?: string
+  tableCellExpression?: string
   helpId?: string
   uniqueHelpId?: boolean
   context?: string
@@ -1430,6 +1568,12 @@ function parseEvaluatedFrameDomRows(output: string): FrameDomRow[] {
         uniqueId: row.uniqueId === true,
         uniqueSearchbox: row.uniqueSearchbox === true,
         searchButton: row.searchButton === true,
+        tableField: row.tableField === true,
+        tableGridKey: typeof row.tableGridKey === 'string' ? row.tableGridKey : undefined,
+        tableColumnName: typeof row.tableColumnName === 'string' ? row.tableColumnName : undefined,
+        tableRowIndex: typeof row.tableRowIndex === 'number' && row.tableRowIndex >= 0 ? row.tableRowIndex : undefined,
+        tableCellValue: typeof row.tableCellValue === 'string' ? row.tableCellValue : undefined,
+        tableCellExpression: typeof row.tableCellExpression === 'string' ? row.tableCellExpression : undefined,
         helpId: typeof row.helpId === 'string' ? row.helpId : undefined,
         uniqueHelpId: row.uniqueHelpId === true,
         context: typeof row.context === 'string' ? row.context : undefined,
@@ -1475,9 +1619,11 @@ function buildFrameDomTargets(
       : `frameLocator(${JSON.stringify(segment.selector)}).nth(${segment.ordinal})`,
     ).join('.')
     const duplicate = (counts.get(`${row.frameSelectors.map((item) => `${item.selector}:${item.ordinal ?? ''}`).join('>')}\u0000${row.role ?? ''}\u0000${row.name}`) ?? 0) > 1
-    const useId = Boolean(row.id && row.uniqueId && (row.searchButton || duplicate || (isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.uniqueSearchbox)))
+    const useId = Boolean(row.id && row.uniqueId && (row.searchButton || row.tableField || duplicate || (isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.uniqueSearchbox)))
     if (duplicate && !useId) return []
-    const leaf = row.helpId && row.uniqueHelpId
+    const leaf = row.role === 'gridcell' && row.tableCellExpression
+      ? row.tableCellExpression
+      : row.helpId && row.uniqueHelpId
       ? `locator(${JSON.stringify(`[data-help-id=${JSON.stringify(row.helpId)}]`)})`
       : useId
       ? `locator(${JSON.stringify(`[id=${JSON.stringify(row.id)}]`)})`
@@ -1496,8 +1642,48 @@ function buildFrameDomTargets(
       locatorExpression: expression,
       context: row.context,
       navigation: row.navigation,
+      tableField: row.tableField,
+      tableGridKey: row.tableGridKey ? `${row.frameSelectors.map((item) => `${item.selector}:${item.ordinal ?? ''}`).join('>')}|${row.tableGridKey}` : undefined,
+      tableColumnName: row.tableColumnName,
+      tableRowIndex: row.tableRowIndex,
+      tableCellValue: row.tableCellValue,
+      tableCellExpression: row.tableCellExpression ? `${frameScope}.${row.tableCellExpression}` : undefined,
     }]
   })
+}
+
+/**
+ * Route SAP/web-grid fills by observed column and row state. Repeated fills in one
+ * column advance to the next empty row; a different column stays on the current
+ * row when that cell is empty, keeping one line item together.
+ */
+function selectNextEmptyTableCell(
+  elements: BrowserElementRef[],
+  requestedTarget: string,
+  cursors: Map<string, { rowIndex: number; columnName: string }>,
+): BrowserElementRef | undefined {
+  const wanted = normalizeWords(requestedTarget)
+  const matches = elements.filter((element) =>
+    element.tableField && element.locatorExpression && element.tableGridKey &&
+    element.tableColumnName && element.tableRowIndex !== undefined &&
+    element.tableCellValue === '' &&
+    textMatchScore(normalizeWords(element.tableColumnName), wanted) >= 0.75,
+  )
+  const gridKeys = [...new Set(matches.map((element) => element.tableGridKey!))]
+  // If more than one grid exposes the same header, let the snapshot/model resolve
+  // which table the manual step refers to instead of choosing a table by order.
+  if (gridKeys.length !== 1) return undefined
+  const gridKey = gridKeys[0]!
+  const cursor = cursors.get(gridKey)
+  const rows = matches
+    .filter((element) => element.tableRowIndex !== undefined)
+    .sort((a, b) => a.tableRowIndex! - b.tableRowIndex!)
+  if (!cursor) return rows[0]
+
+  const sameColumn = normalizeWords(cursor.columnName) === normalizeWords(rows[0]?.tableColumnName ?? '')
+  if (sameColumn) return rows.find((element) => element.tableRowIndex! > cursor.rowIndex)
+  return rows.find((element) => element.tableRowIndex === cursor.rowIndex) ??
+    rows.find((element) => element.tableRowIndex! > cursor.rowIndex)
 }
 
 function textMatchScore(candidate: string, wanted: string): number {

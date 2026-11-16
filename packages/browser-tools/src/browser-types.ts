@@ -66,6 +66,13 @@ export interface BrowserElementRef {
   context?: string
   /** True only when the visible element is nested in an observed navigation container. */
   navigation?: boolean
+  /** DOM-observed SAP/web-grid metadata used to route repeated edits to the right row. */
+  tableField?: boolean
+  tableGridKey?: string
+  tableColumnName?: string
+  tableRowIndex?: number
+  tableCellValue?: string
+  tableCellExpression?: string
 }
 
 /** Options for snapshot/search calls that may need a time budget. */

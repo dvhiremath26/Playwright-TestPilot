@@ -424,7 +424,7 @@ export class PlaywrightMcpAdapter implements BrowserTool {
       // isolation is provided by TestPilot's temporary browser context instead.
       const attachesToExistingBrowser = args.some((arg) =>
         arg.startsWith('--cdp-endpoint') || arg === '--extension' || arg.startsWith('--extension='),
-      )
+      ) || Boolean(this.opts.env?.PLAYWRIGHT_MCP_CDP_ENDPOINT)
       if (!attachesToExistingBrowser && !args.includes('--isolated')) args.push('--isolated')
 
       const child = spawn(command, args, {

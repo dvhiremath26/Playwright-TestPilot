@@ -23,7 +23,12 @@ export function createBrowserSession(options: CreateBrowserSessionOptions): Brow
   const mcp = options.cdpEndpoint
     ? {
         ...options.mcp,
-        extraServerArgs: [...(options.mcp?.extraServerArgs ?? []), `--cdp-endpoint=${options.cdpEndpoint}`],
+        // The environment form is reliable through cmd.exe/npx on Windows, where
+        // arguments after `/c` can otherwise be consumed by the command shell.
+        env: {
+          ...(options.mcp?.env ?? {}),
+          PLAYWRIGHT_MCP_CDP_ENDPOINT: options.cdpEndpoint,
+        },
       }
     : options.mcp
   const fallback = mcp?.command

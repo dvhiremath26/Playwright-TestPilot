@@ -64,6 +64,7 @@ export class BrowserSession {
   private readonly timeoutMs?: number
   private activeBackendId: 'playwright-cli' | 'playwright-mcp' | undefined
   private fallbackReason: string | undefined
+  private lastFailure: string | undefined
 
   constructor(opts: BrowserSessionOptions) {
     this.primary = opts.primary
@@ -81,6 +82,11 @@ export class BrowserSession {
   /** True once the session has engaged the fallback backend. */
   get usedFallback(): boolean {
     return this.activeBackendId === 'playwright-mcp'
+  }
+
+  /** Last backend failure, retained so snapshot errors include the real MCP/CLI cause. */
+  get lastBackendFailure(): string | undefined {
+    return this.lastFailure
   }
 
   /** Which backend would serve this call. */
@@ -131,8 +137,10 @@ export class BrowserSession {
       if (primary && primary.available) {
         const result = await this.invoke(primary, operation, opts)
         if (result.ok) {
+          this.lastFailure = undefined
           return { ...result, provenance: this.makeProvenance(primary.info.id, false) }
         }
+        this.lastFailure = result.error
         // Decide whether the fallback is worth engaging.
         if (this.shouldFallBack(result.error)) {
           this.fallbackReason = result.error
@@ -153,6 +161,7 @@ export class BrowserSession {
         }
       }
       const result = await this.invoke(fallback, operation, opts)
+      this.lastFailure = result.ok ? undefined : result.error
       return { ...result, provenance: this.makeProvenance('playwright-mcp', true) }
     }
 
@@ -208,7 +217,13 @@ export class BrowserSession {
   async capture(target?: string, options?: BrowserCallOptions): Promise<BrowserSnapshot | undefined> {
     const r = await this.execute((t) => t.snapshot(target, options), options)
     if (!r.ok) return undefined
-    return this.activeBackend?.parseSnapshot(r.output ?? '')
+    const raw = r.output?.trim()
+    if (!raw) {
+      this.lastFailure = 'The browser snapshot tool returned an empty response.'
+      return undefined
+    }
+    this.lastFailure = undefined
+    return this.activeBackend?.parseSnapshot(raw)
   }
 
   /** Ask the active browser backend to derive a locator from an observed snapshot ref. */

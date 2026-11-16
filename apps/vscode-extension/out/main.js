@@ -288637,7 +288637,7 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
         manualTestData,
         browserEvidence,
         frameworkExamples: frameworkExamples.text
-      }) + renderScreenArchitectureRequirements(manualCases)
+      }) + renderScreenArchitectureRequirements(manualCases, options.task.browserLocatorCandidates ?? [])
     }
   ];
   const modelId = options.config?.model ?? model?.id;
@@ -288698,18 +288698,20 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
     const exactStepLocators = (options.task.browserLocatorCandidates ?? []).filter((candidate) => candidate.stepOrder !== void 0 && failedStepOrders.has(candidate.stepOrder)).map((candidate) => `- Step ${candidate.stepOrder} on ${candidate.pageUrl ?? "observed screen"}: ${candidate.expression}`);
     const locatorCorrectionGuidance = exactStepLocators.length > 0 ? `Exact observed locator candidates for the rejected steps (copy the role and name exactly; do not change an observed button/link into an option):
 ${[...new Set(exactStepLocators)].join("\n")}` : "";
+    const screenArchitectureGuidance = issues.some((issue) => /flow crosses screens/i.test(issue)) ? "SCREEN ARCHITECTURE CORRECTION REQUIRED: The previous file set was rejected because the spec does not import at least two screen page classes from at least two dedicated pages/<ScreenName>/ folders. Regenerate the complete file set with a real page/locator pair for every screen group in the observed screen-to-step map below. Implement the actions in their respective page classes and call those page objects from the spec in manual-step order. Do not add empty or duplicate placeholder classes just to satisfy the count." : "";
     const correctionPrompt = [
       "Your previous response was rejected and no files have been written.",
       !hasSpec(changes) ? "It did not contain a runnable TypeScript test spec with a test(...) declaration." : "",
       ...issues.length > 0 ? [`It violated these discovered framework standards:
 ${issues.map((issue) => `- ${issue}`).join("\n")}`] : [],
+      screenArchitectureGuidance,
       locatorCorrectionGuidance,
       ...dataIssues.length > 0 ? [`It failed to use the extracted test data:
 ${dataIssues.map((issue) => `- ${issue}`).join("\n")}`] : [],
       "Return the complete file set again. Implement every manual step in order; the generated code does not need to repeat the manual wording verbatim. Correct every listed standards violation and copy the architecture from the real source examples where needed. For new page behavior, create page-object/locator code using matching browser observations; never invent a selector that is absent from evidence. Every new locator expression must exactly match an expression in the Playwright CLI observations or an indexed framework locator. Use an iframe scope only when that exact full scope appears in browser evidence or a relevant indexed locator for this screen; a matching role/name without frame evidence is insufficient. Reuse matching indexed locator fields and page objects instead of declaring duplicate controls. For data-driven text assertions, a locator-class method may accept the expected value and use getByText(expectedValue) only when a literal getByText candidate for that assertion is present in the matching snapshot evidence; pass the value from the data row. If evidence is insufficient, do not invent a locator or leave a guessed CSS selector with an adjustment comment; keep the specific step unresolved and explain which live snapshot is missing.",
       "Page methods must never call this.page.getByRole(...), this.page.frameLocator(...), this.page.locator(...), or this.page.goto(...). Put the observed locator in the paired locator class, then call the confirmed framework wrapper: await this.actions.fill(this.locators.FIELD, value), await this.actions.click(this.locators.FIELD), and await this.actions.browser.navigate(url). Preserve a frame scope only for an element observed inside that exact iframe; use no frame scope for a main-document element. Match the target framework examples and do not use raw Playwright interactions inside a page object.",
       "Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.",
-      renderScreenArchitectureRequirements(manualCases),
+      renderScreenArchitectureRequirements(manualCases, options.task.browserLocatorCandidates ?? []),
       "Output only fenced TypeScript file blocks with repository-relative paths, including a tests/*.spec.ts file."
     ].filter(Boolean).join("\n\n");
     response = await provider.chat([
@@ -288812,14 +288814,47 @@ function requiresMultipleScreenPages(cases) {
     return transitionIndex >= 0 && transitionIndex < steps.length - 2;
   });
 }
-function renderScreenArchitectureRequirements(cases) {
+function renderScreenArchitectureRequirements(cases, candidates = []) {
   if (cases.length === 0) return "";
+  const screenMap = renderObservedScreenMap(cases, candidates);
   return `
 
 ## Screen-based page-object architecture (mandatory)
 
 Analyze the manual steps and step-scoped browser snapshots to identify each distinct application screen/page. Put each screen's reusable page class and paired locator class in its own screen folder: pages/<ScreenName>/<screenName>.page.ts and pages/<ScreenName>/<screenName>.locators.ts (for example pages/LoginPage/login.page.ts and pages/HomePage/home.locators.ts). Use meaningful screen-based class/file names; the folder may follow the existing framework's screen-folder convention. Never put different screens' classes together in one scenario/test-case folder, and never name a page after a control or action such as ContinueButton. Before creating a pair, search the indexed framework page objects and locator classes; import and reuse an existing screen pair when its screen and behavior match, extending it only when needed. Create a new pair only for a screen with no suitable existing page object. Assign each action to the screen where it occurs and have the spec call the respective page objects in flow order. Keep cases that share screens/actions on the same screen page objects. The spec must import and instantiate every page class it uses. Every page class must extend BasePage, delegate interactions through the discovered action facade, and import its matching *Locators class. Use observed or indexed locators only.
-`;
+${screenMap}`;
+}
+function renderObservedScreenMap(cases, candidates) {
+  const sections = [];
+  for (const testCase of cases) {
+    const groups = [];
+    let previousStep;
+    for (const step of testCase.steps) {
+      const stepUrls = new Set(candidates.filter((candidate) => candidate.stepOrder === step.order && candidate.pageUrl).map((candidate) => candidate.pageUrl));
+      const previousUrls = previousStep ? new Set(candidates.filter((candidate) => candidate.stepOrder === previousStep.order && candidate.pageUrl).map((candidate) => candidate.pageUrl)) : /* @__PURE__ */ new Set();
+      const urlChanged = stepUrls.size > 0 && previousUrls.size > 0 && ![...stepUrls].some((url) => previousUrls.has(url));
+      const previousIsTransition = Boolean(previousStep && /\b(?:link|submenu|sidebar\s+navigation|navigation\s+menu|menu\s+item|card|tile|continue|sign\s*in|log\s*in|next\s+page|new\s+screen)\b/i.test(previousStep.action));
+      if (groups.length === 0 || urlChanged || previousIsTransition) groups.push({ steps: [], urls: /* @__PURE__ */ new Set() });
+      const group = groups.at(-1);
+      group.steps.push(step);
+      for (const url of stepUrls) group.urls.add(url);
+      previousStep = step;
+    }
+    const rendered = groups.filter((group) => group.steps.length > 0).map((group, index) => {
+      const stepLines = group.steps.map((step) => `  - Step ${step.order}: ${step.action}`).join("\n");
+      const urls = [...group.urls].slice(0, 2);
+      return `Screen group ${index + 1}${urls.length ? ` (observed URL: ${urls.join(" | ")})` : ""}:
+${stepLines}`;
+    });
+    if (rendered.length > 1) sections.push(`Test "${testCase.title}" observed screen sequence:
+${rendered.join("\n")}`);
+  }
+  return sections.length > 0 ? `
+
+## Observed screen-to-step map
+Treat each listed screen group as a separate page-object responsibility. Reuse an existing page pair only for the same screen; otherwise add its own paired page and locator files, then call the pairs in this order from the spec. Do not collapse these groups into a single page class.
+
+${sections.join("\n\n")}` : "";
 }
 function findScreenPageArchitectureIssues(changes, cases, repositoryRoot) {
   const issues = [];

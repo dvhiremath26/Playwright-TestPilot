@@ -2583,6 +2583,54 @@ export async function generateChangesFromProvider(
     )
   }
 
+  // A broad standards correction may leave a multi-screen spec using one
+  // scenario-level page object. Give this specific structural failure one
+  // focused repair pass with the generated files and observed screen map, rather
+  // than rejecting the entire otherwise runnable test after generic retries.
+  const architectureIssuesBeforeRepair = standardIssues(changes).filter((issue) =>
+    /flow crosses screens|dedicated pages\/<ScreenName>/i.test(issue),
+  )
+  if (hasSpec(changes) && architectureIssuesBeforeRepair.length > 0) {
+    const screenFiles = changes.filter((change) =>
+      change.path === targetSpecPath || /^pages\/.*\.(?:page|locators)\.tsx?$/i.test(change.path.replace(/\\/g, '/')),
+    )
+    const currentFileBlocks = screenFiles.map((change) =>
+      `\`\`\`typescript:${change.path.replace(/\\/g, '/')}\n${change.newContent ?? ''}\`\`\``,
+    ).join('\n\n')
+    const architectureRepairPrompt = [
+      'The generated test failed only the screen-page architecture check. Refactor the complete file set below so each distinct screen in the screen-to-step map has a screen-specific page class and paired locator class in its own pages/<ScreenName>/ folder.',
+      'Keep all test actions, order, assertions, existing observed locator expressions, framework facade calls, and test-data usage intact. Move each page method and its locator fields to the page for the screen where that manual step occurs. Update the spec to import, instantiate, and call those page objects in step order. Reuse an existing pair only for its matching screen. Do not make empty wrappers or placeholder classes.',
+      'The output must contain the complete revised tests/*.spec.ts and all required pages/**/*.page.ts and pages/**/*.locators.ts files. Follow the framework standards and observed locator evidence supplied in the original generation context.',
+      `Architecture validation findings:\n${architectureIssuesBeforeRepair.map((issue) => `- ${issue}`).join('\n')}`,
+      renderScreenArchitectureRequirements(manualCases, options.task.browserLocatorCandidates ?? []),
+      `Confirmed framework conventions:\n${report.conventions.confirmed.join('\n')}`,
+      `Approved observed/indexed locator expressions (reuse these exactly; do not invent locators):\n${[...new Set(approvedLocatorExpressions)].join('\n') || '(none supplied)'}`,
+      `Relevant framework examples:\n${frameworkExamples.text.slice(0, 12000)}`,
+      `Current generated screen files:\n\n${currentFileBlocks}`,
+      'Output only fenced TypeScript file blocks with repository-relative paths.',
+    ].filter(Boolean).join('\n\n')
+    try {
+      response = await provider.chat([
+        { role: 'system', content: messages[0]!.content },
+        { role: 'user', content: architectureRepairPrompt },
+      ], { purpose: 'generate', modelId, signal: options.signal })
+      recordGenerationCall(response.modelId)
+      const repairedScreenChanges = normalizeGeneratedChanges(
+        parseGeneratedFiles(response.text, options.repositoryRoot, { defaultSpecPath: targetSpecPath }),
+      )
+      if (hasSpec(repairedScreenChanges)) {
+        const preservedChanges = changes.filter((change) =>
+          change.path !== targetSpecPath &&
+          !/^pages\/.*\.(?:page|locators)\.tsx?$/i.test(change.path.replace(/\\/g, '/')),
+        )
+        changes = [...preservedChanges, ...repairedScreenChanges]
+      }
+    } catch {
+      // Keep the last complete candidate set. The existing standards check below
+      // will return a concrete architecture failure if the focused pass failed.
+    }
+  }
+
   if (!hasSpec(changes)) {
     const parsed = changes.length > 0
       ? `Parsed file blocks: ${changes.map((change) => change.path).join(', ')}; none contained a tests/*.spec.ts file with a test(...) declaration.`

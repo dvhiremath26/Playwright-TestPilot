@@ -420,6 +420,10 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
           .map((s) => `${s.order}. ${s.action}${s.expectedResult ? `\n   Expected: ${s.expectedResult}` : ''}`)
           .join('\n'),
         manualTestCases: task.testCases,
+        browserEvidence: renderPlanningBrowserEvidence(
+          task.testCases ?? [testCase!],
+          browserLocatorCandidates,
+        ),
         reuseCoverage: renderReuseCoverage(plan),
         duplicateFindings: renderDuplicateFindings(reuse),
         conventions: analysis.report.conventions.confirmed.join('\n'),
@@ -2699,6 +2703,19 @@ function renderScreenArchitectureRequirements(cases: TestCase[], candidates: Ver
   return `\n\n## Screen-based page-object architecture (mandatory)\n\nAnalyze the manual steps and step-scoped browser snapshots to identify each distinct application screen/page. Put each screen's reusable page class and paired locator class in its own screen folder: pages/<ScreenName>/<screenName>.page.ts and pages/<ScreenName>/<screenName>.locators.ts (for example pages/LoginPage/login.page.ts and pages/HomePage/home.locators.ts). Use meaningful screen-based class/file names; the folder may follow the existing framework's screen-folder convention. Never put different screens' classes together in one scenario/test-case folder, and never name a page after a control or action such as ContinueButton. Before creating a pair, search the indexed framework page objects and locator classes; import and reuse an existing screen pair when its screen and behavior match, extending it only when needed. Create a new pair only for a screen with no suitable existing page object. Assign each action to the screen where it occurs and have the spec call the respective page objects in flow order. Keep cases that share screens/actions on the same screen page objects. The spec must import and instantiate every page class it uses. Every page class must extend BasePage, delegate interactions through the discovered action facade, and import its matching *Locators class. Use observed or indexed locators only.\n${screenMap}`
 }
 
+function renderPlanningBrowserEvidence(cases: TestCase[], candidates: VerifiedLocator[]): string {
+  const screenMap = renderObservedScreenMap(cases, candidates)
+  const locatorEvidence = candidates
+    .filter((candidate) => candidate.stepOrder !== undefined)
+    .map((candidate) => `- Step ${candidate.stepOrder}, ${candidate.pageUrl ?? 'observed screen'}: ${candidate.role ?? 'control'} "${candidate.name ?? ''}" via ${candidate.expression}`)
+  return [
+    screenMap,
+    ...(locatorEvidence.length > 0
+      ? [`Step-scoped browser locator observations:\n${[...new Set(locatorEvidence)].join('\n')}`]
+      : []),
+  ].filter(Boolean).join('\n\n')
+}
+
 /** Build a concrete screen/step map from observed URLs and navigation boundaries. */
 function renderObservedScreenMap(cases: TestCase[], candidates: VerifiedLocator[]): string {
   const sections: string[] = []
@@ -2733,7 +2750,7 @@ function renderObservedScreenMap(cases: TestCase[], candidates: VerifiedLocator[
     if (rendered.length > 1) sections.push(`Test "${testCase.title}" observed screen sequence:\n${rendered.join('\n')}`)
   }
   return sections.length > 0
-    ? `\n\n## Observed screen-to-step map\nTreat each listed screen group as a separate page-object responsibility. Reuse an existing page pair only for the same screen; otherwise add its own paired page and locator files, then call the pairs in this order from the spec. Do not collapse these groups into a single page class.\n\n${sections.join('\n\n')}`
+    ? `\n\n## Screen-to-step map from manual transitions and browser evidence\nTreat each listed screen group as a separate page-object responsibility. Reuse an existing page pair only for the same screen; otherwise add its own paired page and locator files, then call the pairs in this order from the spec. Do not collapse these groups into a single page class.\n\n${sections.join('\n\n')}`
     : ''
 }
 

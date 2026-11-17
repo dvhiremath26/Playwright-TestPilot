@@ -53,6 +53,8 @@ When the orchestrator requests a plan, return a structured plan. Do NOT write an
 - Do NOT map a step to a method named only "click" when the step says "fill in the username". Prefer methods whose names match the step's intent.
 - When multiple methods could apply, rank by specificity and list the top two candidates.
 - Never claim a method covers a step when you only matched on a generic word.
+- Treat the observed screen-to-step map and browser observations as authoritative architecture evidence. If the flow crosses distinct screens, list a separate page class and paired locator class path for each screen under its own pages/<ScreenName>/ folder. Do not propose a single scenario-level page object for the entire flow. Reuse an indexed page/locator pair only when it belongs to the same observed screen; otherwise list a new pair.
+- When a screen has no matching indexed page object, name its proposed class and folder from that screen's observed heading, route, or screen-specific manual steps. Do not use the overall test-case or workflow title as the sole page-object name when it covers multiple screens.
 
 ## Generation rules (apply only in the separate code-generation call)
 - Generate one spec file per test case.
@@ -92,6 +94,8 @@ export interface PlanRequestContext {
   testDataModules: string[]
   /** Multiple titled cases supplied in one manual input, when present. */
   manualTestCases?: TestCase[]
+  /** Concise step-scoped browser evidence and screen grouping, when browsing ran. */
+  browserEvidence?: string
   taskId: string
   approvalMode: 'manual' | 'auto'
   /**
@@ -123,6 +127,14 @@ Treat these as separate expected test outcomes and data rows. Identify which act
 ## Framework reuse analysis
 
 ${ctx.reuseCoverage}
+
+---
+
+## Browser observations and screen architecture
+
+${ctx.browserEvidence?.trim() || 'No browser evidence was supplied. Infer screen boundaries only from explicit manual navigation steps and list uncertainty.'}
+
+For each distinct screen shown above, list its own screen-specific page and locator files in Proposed file changes. Keep page-object responsibilities separated by screen; do not propose a single "<Scenario> flow" page class for multiple screens.
 
 ---
 

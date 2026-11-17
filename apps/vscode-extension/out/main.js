@@ -121,6 +121,8 @@ When the orchestrator requests a plan, return a structured plan. Do NOT write an
 - Do NOT map a step to a method named only "click" when the step says "fill in the username". Prefer methods whose names match the step's intent.
 - When multiple methods could apply, rank by specificity and list the top two candidates.
 - Never claim a method covers a step when you only matched on a generic word.
+- Treat the observed screen-to-step map and browser observations as authoritative architecture evidence. If the flow crosses distinct screens, list a separate page class and paired locator class path for each screen under its own pages/<ScreenName>/ folder. Do not propose a single scenario-level page object for the entire flow. Reuse an indexed page/locator pair only when it belongs to the same observed screen; otherwise list a new pair.
+- When a screen has no matching indexed page object, name its proposed class and folder from that screen's observed heading, route, or screen-specific manual steps. Do not use the overall test-case or workflow title as the sole page-object name when it covers multiple screens.
 
 ## Generation rules (apply only in the separate code-generation call)
 - Generate one spec file per test case.
@@ -165,6 +167,14 @@ Treat these as separate expected test outcomes and data rows. Identify which act
 ## Framework reuse analysis
 
 ${ctx.reuseCoverage}
+
+---
+
+## Browser observations and screen architecture
+
+${ctx.browserEvidence?.trim() || "No browser evidence was supplied. Infer screen boundaries only from explicit manual navigation steps and list uncertainty."}
+
+For each distinct screen shown above, list its own screen-specific page and locator files in Proposed file changes. Keep page-object responsibilities separated by screen; do not propose a single "<Scenario> flow" page class for multiple screens.
 
 ---
 
@@ -287165,6 +287175,10 @@ ${item.detail}`
         testCaseSteps: testCase.steps.map((s) => `${s.order}. ${s.action}${s.expectedResult ? `
    Expected: ${s.expectedResult}` : ""}`).join("\n"),
         manualTestCases: task.testCases,
+        browserEvidence: renderPlanningBrowserEvidence(
+          task.testCases ?? [testCase],
+          browserLocatorCandidates
+        ),
         reuseCoverage: renderReuseCoverage(plan),
         duplicateFindings: renderDuplicateFindings(reuse),
         conventions: analysis.report.conventions.confirmed.join("\n"),
@@ -288824,6 +288838,15 @@ function renderScreenArchitectureRequirements(cases, candidates = []) {
 Analyze the manual steps and step-scoped browser snapshots to identify each distinct application screen/page. Put each screen's reusable page class and paired locator class in its own screen folder: pages/<ScreenName>/<screenName>.page.ts and pages/<ScreenName>/<screenName>.locators.ts (for example pages/LoginPage/login.page.ts and pages/HomePage/home.locators.ts). Use meaningful screen-based class/file names; the folder may follow the existing framework's screen-folder convention. Never put different screens' classes together in one scenario/test-case folder, and never name a page after a control or action such as ContinueButton. Before creating a pair, search the indexed framework page objects and locator classes; import and reuse an existing screen pair when its screen and behavior match, extending it only when needed. Create a new pair only for a screen with no suitable existing page object. Assign each action to the screen where it occurs and have the spec call the respective page objects in flow order. Keep cases that share screens/actions on the same screen page objects. The spec must import and instantiate every page class it uses. Every page class must extend BasePage, delegate interactions through the discovered action facade, and import its matching *Locators class. Use observed or indexed locators only.
 ${screenMap}`;
 }
+function renderPlanningBrowserEvidence(cases, candidates) {
+  const screenMap = renderObservedScreenMap(cases, candidates);
+  const locatorEvidence = candidates.filter((candidate) => candidate.stepOrder !== void 0).map((candidate) => `- Step ${candidate.stepOrder}, ${candidate.pageUrl ?? "observed screen"}: ${candidate.role ?? "control"} "${candidate.name ?? ""}" via ${candidate.expression}`);
+  return [
+    screenMap,
+    ...locatorEvidence.length > 0 ? [`Step-scoped browser locator observations:
+${[...new Set(locatorEvidence)].join("\n")}`] : []
+  ].filter(Boolean).join("\n\n");
+}
 function renderObservedScreenMap(cases, candidates) {
   const sections = [];
   for (const testCase of cases) {
@@ -288851,7 +288874,7 @@ ${rendered.join("\n")}`);
   }
   return sections.length > 0 ? `
 
-## Observed screen-to-step map
+## Screen-to-step map from manual transitions and browser evidence
 Treat each listed screen group as a separate page-object responsibility. Reuse an existing page pair only for the same screen; otherwise add its own paired page and locator files, then call the pairs in this order from the spec. Do not collapse these groups into a single page class.
 
 ${sections.join("\n\n")}` : "";

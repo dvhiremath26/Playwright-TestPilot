@@ -288742,8 +288742,10 @@ ${dataIssues.map((issue) => `- ${issue}`).join("\n")}`] : [],
     (issue) => /flow crosses screens|dedicated pages\/<ScreenName>/i.test(issue)
   );
   if (hasSpec(changes) && architectureIssuesBeforeRepair.length > 0) {
+    const isGeneratedSpecPath = (filePath) => /^tests\/[^/]+\.spec\.tsx?$/i.test(filePath.replace(/\\/g, "/"));
+    const isScreenPagePath = (filePath) => /^pages\/.*\.(?:page|locators)\.tsx?$/i.test(filePath.replace(/\\/g, "/"));
     const screenFiles = changes.filter(
-      (change) => change.path === targetSpecPath || /^pages\/.*\.(?:page|locators)\.tsx?$/i.test(change.path.replace(/\\/g, "/"))
+      (change) => isGeneratedSpecPath(change.path) || isScreenPagePath(change.path)
     );
     const currentFileBlocks = screenFiles.map(
       (change) => `\`\`\`typescript:${change.path.replace(/\\/g, "/")}
@@ -288778,7 +288780,7 @@ ${currentFileBlocks}`,
       );
       if (hasSpec(repairedScreenChanges)) {
         const preservedChanges = changes.filter(
-          (change) => change.path !== targetSpecPath && !/^pages\/.*\.(?:page|locators)\.tsx?$/i.test(change.path.replace(/\\/g, "/"))
+          (change) => !isGeneratedSpecPath(change.path) && !isScreenPagePath(change.path)
         );
         changes = [...preservedChanges, ...repairedScreenChanges];
       }

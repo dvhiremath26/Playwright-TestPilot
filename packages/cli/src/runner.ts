@@ -2591,8 +2591,12 @@ export async function generateChangesFromProvider(
     /flow crosses screens|dedicated pages\/<ScreenName>/i.test(issue),
   )
   if (hasSpec(changes) && architectureIssuesBeforeRepair.length > 0) {
+    const isGeneratedSpecPath = (filePath: string): boolean =>
+      /^tests\/[^/]+\.spec\.tsx?$/i.test(filePath.replace(/\\/g, '/'))
+    const isScreenPagePath = (filePath: string): boolean =>
+      /^pages\/.*\.(?:page|locators)\.tsx?$/i.test(filePath.replace(/\\/g, '/'))
     const screenFiles = changes.filter((change) =>
-      change.path === targetSpecPath || /^pages\/.*\.(?:page|locators)\.tsx?$/i.test(change.path.replace(/\\/g, '/')),
+      isGeneratedSpecPath(change.path) || isScreenPagePath(change.path),
     )
     const currentFileBlocks = screenFiles.map((change) =>
       `\`\`\`typescript:${change.path.replace(/\\/g, '/')}\n${change.newContent ?? ''}\`\`\``,
@@ -2620,8 +2624,7 @@ export async function generateChangesFromProvider(
       )
       if (hasSpec(repairedScreenChanges)) {
         const preservedChanges = changes.filter((change) =>
-          change.path !== targetSpecPath &&
-          !/^pages\/.*\.(?:page|locators)\.tsx?$/i.test(change.path.replace(/\\/g, '/')),
+          !isGeneratedSpecPath(change.path) && !isScreenPagePath(change.path),
         )
         changes = [...preservedChanges, ...repairedScreenChanges]
       }

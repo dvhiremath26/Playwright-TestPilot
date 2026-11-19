@@ -286227,13 +286227,14 @@ function runChild(command, args, opts) {
 // packages/browser-tools/src/playwright-mcp-adapter.ts
 var import_node_child_process3 = require("node:child_process");
 var DEFAULT_TIMEOUT_MS2 = 75e3;
-var INIT_TIMEOUT_MS = 15e3;
+var INIT_TIMEOUT_MS = 3e4;
 var MAX_STDOUT_BYTES = 256 * 1024;
 var PlaywrightMcpAdapter = class {
   opts;
   proc = null;
   nextId = 1;
   initialized = false;
+  initializing;
   pending = /* @__PURE__ */ new Map();
   stderrBuf = "";
   elementDescriptions = /* @__PURE__ */ new Map();
@@ -286392,27 +286393,44 @@ var PlaywrightMcpAdapter = class {
     }
     return { raw, elements, capturedAt: (/* @__PURE__ */ new Date()).toISOString() };
   }
-  /** Perform the MCP initialize handshake, once. */
+  /** Perform the MCP initialize handshake once; concurrent first calls share it. */
   async ensureInitialized() {
     if (this.initialized) return;
-    const res = await this.send(
-      "initialize",
-      {
-        protocolVersion: "2025-11-25",
-        capabilities: {},
-        clientInfo: { name: "tcoe-testpilot", version: "0.1.0" }
-      },
-      INIT_TIMEOUT_MS
-    );
-    if (res.error) throw new Error(`MCP initialize failed: ${res.error.message}`);
-    void this.notify("notifications/initialized");
-    const tools = await this.send("tools/list", {}, INIT_TIMEOUT_MS);
-    if (tools.error) throw new Error(`MCP tools/list failed: ${tools.error.message}`);
-    const result = tools.result;
-    for (const tool of result?.tools ?? []) {
-      if (tool.name && tool.inputSchema) this.toolSchemas.set(tool.name, tool.inputSchema);
+    if (this.initializing) return this.initializing;
+    const initialization = this.initializeSession();
+    this.initializing = initialization;
+    try {
+      await initialization;
+    } finally {
+      if (this.initializing === initialization) this.initializing = void 0;
     }
-    this.initialized = true;
+  }
+  async initializeSession() {
+    try {
+      const res = await this.send(
+        "initialize",
+        {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "tcoe-testpilot", version: "0.1.0" }
+        },
+        INIT_TIMEOUT_MS
+      );
+      if (res.error) throw new Error(`MCP initialize failed: ${res.error.message}`);
+      void this.notify("notifications/initialized");
+      const tools = await this.send("tools/list", {}, INIT_TIMEOUT_MS);
+      if (tools.error) throw new Error(`MCP tools/list failed: ${tools.error.message}`);
+      const result = tools.result;
+      for (const tool of result?.tools ?? []) {
+        if (tool.name && tool.inputSchema) this.toolSchemas.set(tool.name, tool.inputSchema);
+      }
+      this.initialized = true;
+    } catch (error) {
+      if (/timed out|server exited|spawn|econnreset|epipe|not connected/i.test(String(error))) {
+        this.killServer();
+      }
+      throw error;
+    }
   }
   /** Invoke an MCP tool. */
   async call(tool, args, options) {
@@ -286528,15 +286546,23 @@ var PlaywrightMcpAdapter = class {
       this.stderrBuf = "";
       child.on("error", (err) => {
         const message = spawnErrorMessage(err, command);
-        this.pending.forEach((p) => p.reject(new Error(message)));
-        this.pending.clear();
-        this.proc = null;
+        if (this.proc === child) {
+          this.pending.forEach((p) => p.reject(new Error(message)));
+          this.pending.clear();
+          this.proc = null;
+          this.initialized = false;
+          this.toolSchemas.clear();
+        }
         if (!this.initialized) reject(new Error(message));
       });
       child.on("close", () => {
-        this.proc = null;
-        this.pending.forEach((p) => p.reject(new Error("MCP server exited")));
-        this.pending.clear();
+        if (this.proc === child) {
+          this.proc = null;
+          this.initialized = false;
+          this.toolSchemas.clear();
+          this.pending.forEach((p) => p.reject(new Error("MCP server exited")));
+          this.pending.clear();
+        }
       });
       let buf = "";
       child.stdout.on("data", (chunk) => {
@@ -286577,9 +286603,15 @@ var PlaywrightMcpAdapter = class {
 `;
   }
   killServer() {
-    if (!this.proc) return;
-    this.proc.kill("SIGTERM");
+    const child = this.proc;
     this.proc = null;
+    this.initialized = false;
+    this.toolSchemas.clear();
+    this.elementDescriptions.clear();
+    this.snapshotElements.clear();
+    this.pending.forEach((p) => p.reject(new Error("MCP server session reset")));
+    this.pending.clear();
+    if (child && !child.killed) child.kill("SIGTERM");
   }
 };
 

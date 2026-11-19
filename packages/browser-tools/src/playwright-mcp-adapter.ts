@@ -34,8 +34,8 @@ import type {
 // Enterprise pages can be slow to respond after sign-in or SPA navigation.
 // Keep tool calls alive long enough for the browser to settle and return evidence.
 const DEFAULT_TIMEOUT_MS = 75_000
-/** MCP servers can be slow to first respond; allow a bit more on initialize. */
-const INIT_TIMEOUT_MS = 15_000
+/** First launch can include npx startup and CDP attachment; give initialization room to finish. */
+const INIT_TIMEOUT_MS = 30_000
 
 /** Cap on how much we read from the server — screenshot payloads can be large. */
 const MAX_STDOUT_BYTES = 256 * 1024
@@ -76,6 +76,7 @@ export class PlaywrightMcpAdapter implements BrowserTool {
   private proc: ReturnType<typeof spawn> | null = null
   private nextId = 1
   private initialized = false
+  private initializing: Promise<void> | undefined
   private pending = new Map<number, { resolve: (m: RpcMessage) => void; reject: (e: Error) => void }>()
   private stderrBuf = ''
   private readonly elementDescriptions = new Map<string, string>()
@@ -282,29 +283,51 @@ export class PlaywrightMcpAdapter implements BrowserTool {
     return { raw, elements, capturedAt: new Date().toISOString() }
   }
 
-  /** Perform the MCP initialize handshake, once. */
+  /** Perform the MCP initialize handshake once; concurrent first calls share it. */
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) return
+    if (this.initializing) return this.initializing
 
-    const res = await this.send(
-      'initialize',
-      {
-        protocolVersion: '2025-11-25',
-        capabilities: {},
-        clientInfo: { name: 'tcoe-testpilot', version: '0.1.0' },
-      },
-      INIT_TIMEOUT_MS,
-    )
-
-    if (res.error) throw new Error(`MCP initialize failed: ${res.error.message}`)
-    void this.notify('notifications/initialized')
-    const tools = await this.send('tools/list', {}, INIT_TIMEOUT_MS)
-    if (tools.error) throw new Error(`MCP tools/list failed: ${tools.error.message}`)
-    const result = tools.result as { tools?: Array<{ name?: string; inputSchema?: Record<string, unknown> }> } | undefined
-    for (const tool of result?.tools ?? []) {
-      if (tool.name && tool.inputSchema) this.toolSchemas.set(tool.name, tool.inputSchema)
+    const initialization = this.initializeSession()
+    this.initializing = initialization
+    try {
+      await initialization
+    } finally {
+      if (this.initializing === initialization) this.initializing = undefined
     }
-    this.initialized = true
+  }
+
+  private async initializeSession(): Promise<void> {
+    try {
+      const res = await this.send(
+        'initialize',
+        {
+          protocolVersion: '2025-11-25',
+          capabilities: {},
+          clientInfo: { name: 'tcoe-testpilot', version: '0.1.0' },
+        },
+        INIT_TIMEOUT_MS,
+      )
+
+      if (res.error) throw new Error(`MCP initialize failed: ${res.error.message}`)
+      void this.notify('notifications/initialized')
+      const tools = await this.send('tools/list', {}, INIT_TIMEOUT_MS)
+      if (tools.error) throw new Error(`MCP tools/list failed: ${tools.error.message}`)
+      const result = tools.result as { tools?: Array<{ name?: string; inputSchema?: Record<string, unknown> }> } | undefined
+      for (const tool of result?.tools ?? []) {
+        if (tool.name && tool.inputSchema) this.toolSchemas.set(tool.name, tool.inputSchema)
+      }
+      this.initialized = true
+    } catch (error) {
+      // A timeout leaves the child alive but with no valid initialize response.
+      // Reusing that stdio session makes every later snapshot time out too. Reset
+      // only transient startup/transport failures so the caller's next bounded
+      // snapshot retry launches a clean server and reattaches to the same CDP page.
+      if (/timed out|server exited|spawn|econnreset|epipe|not connected/i.test(String(error))) {
+        this.killServer()
+      }
+      throw error
+    }
   }
 
   /** Invoke an MCP tool. */
@@ -440,16 +463,24 @@ export class PlaywrightMcpAdapter implements BrowserTool {
 
       child.on('error', (err) => {
         const message = spawnErrorMessage(err, command)
-        this.pending.forEach((p) => p.reject(new Error(message)))
-        this.pending.clear()
-        this.proc = null
+        if (this.proc === child) {
+          this.pending.forEach((p) => p.reject(new Error(message)))
+          this.pending.clear()
+          this.proc = null
+          this.initialized = false
+          this.toolSchemas.clear()
+        }
         if (!this.initialized) reject(new Error(message))
       })
 
       child.on('close', () => {
-        this.proc = null
-        this.pending.forEach((p) => p.reject(new Error('MCP server exited')))
-        this.pending.clear()
+        if (this.proc === child) {
+          this.proc = null
+          this.initialized = false
+          this.toolSchemas.clear()
+          this.pending.forEach((p) => p.reject(new Error('MCP server exited')))
+          this.pending.clear()
+        }
       })
 
       // MCP stdio uses one JSON-RPC message per line. Ignore non-JSON startup chatter,
@@ -496,8 +527,14 @@ export class PlaywrightMcpAdapter implements BrowserTool {
   }
 
   private killServer(): void {
-    if (!this.proc) return
-    this.proc.kill('SIGTERM')
+    const child = this.proc
     this.proc = null
+    this.initialized = false
+    this.toolSchemas.clear()
+    this.elementDescriptions.clear()
+    this.snapshotElements.clear()
+    this.pending.forEach((p) => p.reject(new Error('MCP server session reset')))
+    this.pending.clear()
+    if (child && !child.killed) child.kill('SIGTERM')
   }
 }

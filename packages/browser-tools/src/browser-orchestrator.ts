@@ -65,6 +65,8 @@ export class BrowserSession {
   private activeBackendId: 'playwright-cli' | 'playwright-mcp' | undefined
   private fallbackReason: string | undefined
   private lastFailure: string | undefined
+  private fallbackPrepared = false
+  private fallbackPreparationError: string | undefined
 
   constructor(opts: BrowserSessionOptions) {
     this.primary = opts.primary
@@ -89,6 +91,30 @@ export class BrowserSession {
     return this.lastFailure
   }
 
+  /** Reason a warmed fallback could not be used, if preparation failed earlier. */
+  get fallbackFailure(): string | undefined {
+    return this.fallbackPreparationError
+  }
+
+  /** Prepare MCP before replay reaches a screen where the primary may need help. */
+  async prepareFallback(options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    if (!this.fallback?.available) {
+      this.fallbackPreparationError = 'Playwright MCP fallback is not configured.'
+      return { ok: false, error: this.fallbackPreparationError }
+    }
+    if (!this.fallback.prepare) {
+      this.fallbackPrepared = true
+      return { ok: true, output: 'Fallback backend does not require a warm-up.' }
+    }
+    const result = await this.fallback.prepare(this.withDefaults(options))
+    this.fallbackPrepared = result.ok
+    this.fallbackPreparationError = result.ok ? undefined : result.error
+    if (!result.ok) {
+      try { await this.fallback.close(this.withDefaults(options)) } catch { /* Preserve the setup error. */ }
+    }
+    return result
+  }
+
   /** Which backend would serve this call. */
   get provenance(): BackendProvenance | undefined {
     const active = this.activeBackend
@@ -111,7 +137,7 @@ export class BrowserSession {
 
   /** Switch deliberately to MCP when the primary snapshot cannot support a step match. */
   activateFallback(reason: string): boolean {
-    if (!this.fallback?.available || this.usedFallback) return false
+    if (!this.fallback?.available || this.usedFallback || this.fallbackPreparationError) return false
     this.fallbackReason = reason
     this.activeBackendId = 'playwright-mcp'
     return true
@@ -152,6 +178,13 @@ export class BrowserSession {
 
     const fallback = this.fallback
     if (fallback) {
+      if (this.fallbackPreparationError) {
+        return {
+          ok: false,
+          error: this.fallbackPreparationError,
+          provenance: this.makeProvenance('playwright-cli', false),
+        }
+      }
       this.activeBackendId = 'playwright-mcp'
       if (!fallback.available) {
         return {
@@ -250,7 +283,7 @@ export class BrowserSession {
     const opts = this.withDefaults(options)
     const toClose: BrowserTool[] = []
     if (this.primary) toClose.push(this.primary)
-    if (this.fallback && this.usedFallback) toClose.push(this.fallback)
+    if (this.fallback && (this.usedFallback || this.fallbackPrepared || this.fallbackPreparationError)) toClose.push(this.fallback)
 
     for (const tool of toClose) {
       try {

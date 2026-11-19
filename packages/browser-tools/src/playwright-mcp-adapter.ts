@@ -120,6 +120,17 @@ export class PlaywrightMcpAdapter implements BrowserTool {
     }
   }
 
+  /** Start and initialize MCP before the primary backend reaches a difficult screen. */
+  async prepare(_options?: BrowserCallOptions): Promise<BrowserActionResult> {
+    try {
+      await this.ensureInitialized()
+      return { ok: true, output: 'Playwright MCP fallback is initialized and ready.' }
+    } catch (error) {
+      this.killServer()
+      return { ok: false, error: `Playwright MCP fallback preparation failed: ${redact(String(error)).slice(0, 600)}` }
+    }
+  }
+
   async goto(url: string, options?: BrowserCallOptions): Promise<BrowserActionResult> {
     return this.call('browser_navigate', { url }, options)
   }

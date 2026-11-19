@@ -1066,7 +1066,10 @@ export async function gatherEvidenceForTestCase(
           resumeLocatorCandidates: locatorCandidates,
         })
       }
-      throw new Error(`${error.message} Playwright MCP fallback is unavailable.`)
+      const fallbackDetail = browser.fallbackFailure
+        ? ` Playwright MCP fallback is unavailable because preparation failed: ${browser.fallbackFailure}`
+        : ' Playwright MCP fallback is unavailable.'
+      throw new Error(`${error.message}${fallbackDetail}`)
     }
     throw error
   }
@@ -1075,13 +1078,21 @@ export async function gatherEvidenceForTestCase(
 
   async function captureScreen(label: string, pageUrl: string, nextStepAction?: string) {
     let observed: BrowserSnapshot | undefined
-    for (let attempt = 0; attempt < 3 && !observed; attempt++) {
+    const usingFallback = browser.usedFallback
+    const maxAttempts = usingFallback ? 2 : 3
+    for (let attempt = 0; attempt < maxAttempts && !observed; attempt++) {
+      if (usingFallback) {
+        options.onStatus?.(`Playwright MCP is inspecting the current page for the next manual step (attempt ${attempt + 1} of ${maxAttempts}).`)
+      }
       observed = await browser.capture(undefined, { signal: options.signal, timeoutMs: 20_000 })
       const startupHandshakeFailed = /MCP request ["'](?:initialize|tools\/list)["'] timed out/i.test(browser.lastBackendFailure ?? '')
-      if (!observed && attempt < 2 && !startupHandshakeFailed) await new Promise((resolve) => setTimeout(resolve, 750))
+      if (!observed && attempt + 1 < maxAttempts && !startupHandshakeFailed) await new Promise((resolve) => setTimeout(resolve, 500))
       if (startupHandshakeFailed) break
     }
-    if (!observed && nextStepAction) {
+    // DOM evaluation is the Playwright CLI-only recovery path. On MCP it can turn
+    // a failed snapshot into another long browser_evaluate timeout while offering
+    // no additional grounded evidence.
+    if (!usingFallback && !observed && nextStepAction) {
       const nextAction = parseReplayAction(nextStepAction)
       if (nextAction) {
         // Some SAP UI5 tables make the CLI accessibility snapshot fail even
@@ -1104,7 +1115,7 @@ export async function gatherEvidenceForTestCase(
     }
     if (!observed) {
       const cause = browser.lastBackendFailure ? ` Backend detail: ${browser.lastBackendFailure}` : ''
-      throw new BrowserSnapshotUnavailableError(`The active browser backend could not capture a snapshot for ${label} after 3 attempts.${cause}`)
+      throw new BrowserSnapshotUnavailableError(`The active browser backend could not capture a snapshot for ${label} after ${maxAttempts} attempts.${cause}`)
     }
     const source = browser.provenance ?? navigationSource
     const elements = observed.elements
@@ -1379,15 +1390,10 @@ async function inspectVisibleDomTargets(
             const ariaColumn = Number(gridCell.getAttribute('aria-colindex'));
             const siblingCells = Array.from(gridCell.parentElement?.children || []).filter(node => node.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
             const columnIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
-            // SAP UI5 renders nested wrappers for each header; counting every wrapper
-            // shifts the header-to-cell mapping and can target the wrong table column.
-            const headerCandidates = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableColCell,.sapMListTblHeaderCell'));
-            const headers = headerCandidates.filter(node => {
-              const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
-              const text = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
-              const nestedDuplicate = headerCandidates.some(other => other !== node && node.contains(other) && text && text === (other.innerText || other.textContent || '').replace(/\\s+/g, ' ').trim());
-              return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && !nestedDuplicate;
-            });
+            // Keep the header selector used by build 0.1.104. SAP UI5's outer
+            // .sapUiTableCol nodes correspond one-to-one with table columns;
+            // mixing in their nested header wrappers shifts Material/Quantity.
+            const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
             const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
             tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
             if (gridRow) {
@@ -1483,14 +1489,8 @@ async function inspectVisibleDomTargets(
           const ariaColumn = Number(gridCell.getAttribute('aria-colindex'));
           const siblingCells = Array.from(gridCell.parentElement?.children || []).filter(node => node.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
           const columnIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
-          // Keep SAP's column mapping one-to-one even when header wrappers are nested.
-          const headerCandidates = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableColCell,.sapMListTblHeaderCell'));
-          const headers = headerCandidates.filter(node => {
-            const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
-            const text = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
-            const nestedDuplicate = headerCandidates.some(other => other !== node && node.contains(other) && text && text === (other.innerText || other.textContent || '').replace(/\\s+/g, ' ').trim());
-            return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && !nestedDuplicate;
-          });
+          // Keep the header selector used by build 0.1.104 for the SAP UI5 grid.
+          const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
           const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
           tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
           if (gridRow) {

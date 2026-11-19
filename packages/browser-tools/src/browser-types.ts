@@ -96,6 +96,9 @@ export interface BrowserTool {
   /** Is this backend actually usable right now? Cheap; must not launch a browser. */
   readonly available: boolean
 
+  /** Optional backend warm-up, used to prepare a fallback before a long browser flow. */
+  prepare?(options?: BrowserCallOptions): Promise<BrowserActionResult>
+
   /** Open a browser session at an initial URL. Implicitly creates a new session. */
   goto(url: string, options?: BrowserCallOptions): Promise<BrowserActionResult>
 

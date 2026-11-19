@@ -167,6 +167,19 @@ class WorkspaceService implements vscode.Disposable {
           const controller = new AbortController()
           const subscription = token.onCancellationRequested(() => controller.abort())
           try {
+            if (browser) {
+              const message = 'Preparing Playwright MCP fallback before replay; the Playwright CLI remains the primary browser backend.'
+              progress.report({ message })
+              this.panel.postStatus(message)
+              const fallback = await browser.prepareFallback({ signal: controller.signal })
+              if (fallback.ok) {
+                this.panel.postStatus('Playwright MCP fallback is ready. Starting the manual test replay.')
+              } else {
+                const detail = `MCP fallback could not be prepared; TestPilot will continue with Playwright CLI. ${fallback.error ?? ''}`.trim()
+                progress.report({ message: detail })
+                this.panel.postStatus(detail)
+              }
+            }
             return await runAgent({
               rawTestCase: raw,
               repositoryRoot: cfg.frameworkRepo,

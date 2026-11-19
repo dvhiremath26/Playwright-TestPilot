@@ -286270,6 +286270,16 @@ var PlaywrightMcpAdapter = class {
       canGenerateLocator: true
     };
   }
+  /** Start and initialize MCP before the primary backend reaches a difficult screen. */
+  async prepare(_options) {
+    try {
+      await this.ensureInitialized();
+      return { ok: true, output: "Playwright MCP fallback is initialized and ready." };
+    } catch (error) {
+      this.killServer();
+      return { ok: false, error: `Playwright MCP fallback preparation failed: ${redact3(String(error)).slice(0, 600)}` };
+    }
+  }
   async goto(url, options) {
     return this.call("browser_navigate", { url }, options);
   }
@@ -286701,6 +286711,8 @@ var BrowserSession = class {
   activeBackendId;
   fallbackReason;
   lastFailure;
+  fallbackPrepared = false;
+  fallbackPreparationError;
   constructor(opts) {
     this.primary = opts.primary;
     this.fallback = opts.fallback;
@@ -286717,6 +286729,31 @@ var BrowserSession = class {
   /** Last backend failure, retained so snapshot errors include the real MCP/CLI cause. */
   get lastBackendFailure() {
     return this.lastFailure;
+  }
+  /** Reason a warmed fallback could not be used, if preparation failed earlier. */
+  get fallbackFailure() {
+    return this.fallbackPreparationError;
+  }
+  /** Prepare MCP before replay reaches a screen where the primary may need help. */
+  async prepareFallback(options) {
+    if (!this.fallback?.available) {
+      this.fallbackPreparationError = "Playwright MCP fallback is not configured.";
+      return { ok: false, error: this.fallbackPreparationError };
+    }
+    if (!this.fallback.prepare) {
+      this.fallbackPrepared = true;
+      return { ok: true, output: "Fallback backend does not require a warm-up." };
+    }
+    const result = await this.fallback.prepare(this.withDefaults(options));
+    this.fallbackPrepared = result.ok;
+    this.fallbackPreparationError = result.ok ? void 0 : result.error;
+    if (!result.ok) {
+      try {
+        await this.fallback.close(this.withDefaults(options));
+      } catch {
+      }
+    }
+    return result;
   }
   /** Which backend would serve this call. */
   get provenance() {
@@ -286736,7 +286773,7 @@ var BrowserSession = class {
   }
   /** Switch deliberately to MCP when the primary snapshot cannot support a step match. */
   activateFallback(reason) {
-    if (!this.fallback?.available || this.usedFallback) return false;
+    if (!this.fallback?.available || this.usedFallback || this.fallbackPreparationError) return false;
     this.fallbackReason = reason;
     this.activeBackendId = "playwright-mcp";
     return true;
@@ -286770,6 +286807,13 @@ var BrowserSession = class {
     }
     const fallback = this.fallback;
     if (fallback) {
+      if (this.fallbackPreparationError) {
+        return {
+          ok: false,
+          error: this.fallbackPreparationError,
+          provenance: this.makeProvenance("playwright-cli", false)
+        };
+      }
       this.activeBackendId = "playwright-mcp";
       if (!fallback.available) {
         return {
@@ -286856,7 +286900,7 @@ var BrowserSession = class {
     const opts = this.withDefaults(options);
     const toClose = [];
     if (this.primary) toClose.push(this.primary);
-    if (this.fallback && this.usedFallback) toClose.push(this.fallback);
+    if (this.fallback && (this.usedFallback || this.fallbackPrepared || this.fallbackPreparationError)) toClose.push(this.fallback);
     for (const tool of toClose) {
       try {
         await tool.close(opts);
@@ -287806,20 +287850,26 @@ async function gatherEvidenceForTestCase(browser, options) {
           resumeLocatorCandidates: locatorCandidates
         });
       }
-      throw new Error(`${error.message} Playwright MCP fallback is unavailable.`);
+      const fallbackDetail = browser.fallbackFailure ? ` Playwright MCP fallback is unavailable because preparation failed: ${browser.fallbackFailure}` : " Playwright MCP fallback is unavailable.";
+      throw new Error(`${error.message}${fallbackDetail}`);
     }
     throw error;
   }
   return { evidence, locatorCandidates };
   async function captureScreen(label, pageUrl, nextStepAction) {
     let observed;
-    for (let attempt = 0; attempt < 3 && !observed; attempt++) {
+    const usingFallback = browser.usedFallback;
+    const maxAttempts = usingFallback ? 2 : 3;
+    for (let attempt = 0; attempt < maxAttempts && !observed; attempt++) {
+      if (usingFallback) {
+        options.onStatus?.(`Playwright MCP is inspecting the current page for the next manual step (attempt ${attempt + 1} of ${maxAttempts}).`);
+      }
       observed = await browser.capture(void 0, { signal: options.signal, timeoutMs: 2e4 });
       const startupHandshakeFailed = /MCP request ["'](?:initialize|tools\/list)["'] timed out/i.test(browser.lastBackendFailure ?? "");
-      if (!observed && attempt < 2 && !startupHandshakeFailed) await new Promise((resolve6) => setTimeout(resolve6, 750));
+      if (!observed && attempt + 1 < maxAttempts && !startupHandshakeFailed) await new Promise((resolve6) => setTimeout(resolve6, 500));
       if (startupHandshakeFailed) break;
     }
-    if (!observed && nextStepAction) {
+    if (!usingFallback && !observed && nextStepAction) {
       const nextAction = parseReplayAction(nextStepAction);
       if (nextAction) {
         const domTargets = await inspectVisibleDomTargets(browser, nextAction.target, options.signal);
@@ -287839,7 +287889,7 @@ async function gatherEvidenceForTestCase(browser, options) {
     }
     if (!observed) {
       const cause = browser.lastBackendFailure ? ` Backend detail: ${browser.lastBackendFailure}` : "";
-      throw new BrowserSnapshotUnavailableError(`The active browser backend could not capture a snapshot for ${label} after 3 attempts.${cause}`);
+      throw new BrowserSnapshotUnavailableError(`The active browser backend could not capture a snapshot for ${label} after ${maxAttempts} attempts.${cause}`);
     }
     const source = browser.provenance ?? navigationSource;
     const elements = observed.elements.slice(0, 40).map((element) => `${element.role ?? "element"}${element.name ? ` "${element.name}"` : ""} [${element.ref}]`);
@@ -288074,15 +288124,10 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
             const ariaColumn = Number(gridCell.getAttribute('aria-colindex'));
             const siblingCells = Array.from(gridCell.parentElement?.children || []).filter(node => node.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
             const columnIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
-            // SAP UI5 renders nested wrappers for each header; counting every wrapper
-            // shifts the header-to-cell mapping and can target the wrong table column.
-            const headerCandidates = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableColCell,.sapMListTblHeaderCell'));
-            const headers = headerCandidates.filter(node => {
-              const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
-              const text = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
-              const nestedDuplicate = headerCandidates.some(other => other !== node && node.contains(other) && text && text === (other.innerText || other.textContent || '').replace(/\\s+/g, ' ').trim());
-              return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && !nestedDuplicate;
-            });
+            // Keep the header selector used by build 0.1.104. SAP UI5's outer
+            // .sapUiTableCol nodes correspond one-to-one with table columns;
+            // mixing in their nested header wrappers shifts Material/Quantity.
+            const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
             const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
             tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
             if (gridRow) {
@@ -288177,14 +288222,8 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const ariaColumn = Number(gridCell.getAttribute('aria-colindex'));
           const siblingCells = Array.from(gridCell.parentElement?.children || []).filter(node => node.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
           const columnIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
-          // Keep SAP's column mapping one-to-one even when header wrappers are nested.
-          const headerCandidates = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableColCell,.sapMListTblHeaderCell'));
-          const headers = headerCandidates.filter(node => {
-            const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
-            const text = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
-            const nestedDuplicate = headerCandidates.some(other => other !== node && node.contains(other) && text && text === (other.innerText || other.textContent || '').replace(/\\s+/g, ' ').trim());
-            return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && !nestedDuplicate;
-          });
+          // Keep the header selector used by build 0.1.104 for the SAP UI5 grid.
+          const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
           const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
           tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
           if (gridRow) {
@@ -290724,6 +290763,19 @@ var WorkspaceService = class {
             const controller = new AbortController();
             const subscription = token.onCancellationRequested(() => controller.abort());
             try {
+              if (browser) {
+                const message = "Preparing Playwright MCP fallback before replay; the Playwright CLI remains the primary browser backend.";
+                progress.report({ message });
+                this.panel.postStatus(message);
+                const fallback = await browser.prepareFallback({ signal: controller.signal });
+                if (fallback.ok) {
+                  this.panel.postStatus("Playwright MCP fallback is ready. Starting the manual test replay.");
+                } else {
+                  const detail = `MCP fallback could not be prepared; TestPilot will continue with Playwright CLI. ${fallback.error ?? ""}`.trim();
+                  progress.report({ message: detail });
+                  this.panel.postStatus(detail);
+                }
+              }
               return await runAgent({
                 rawTestCase: raw,
                 repositoryRoot: cfg.frameworkRepo,

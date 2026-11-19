@@ -2951,7 +2951,7 @@ export async function generateChangesFromProvider(
     const isGeneratedSpecPath = (filePath: string): boolean =>
       /^tests\/[^/]+\.spec\.tsx?$/i.test(filePath.replace(/\\/g, '/'))
     const isScreenPagePath = (filePath: string): boolean =>
-      /^pages\/.*\.(?:page|locators)\.tsx?$/i.test(filePath.replace(/\\/g, '/'))
+      /^pages\/.*\.(?:(?:page|locators)\.tsx?|(?:Page|Locators)\.tsx?)$/i.test(filePath.replace(/\\/g, '/'))
     const screenFiles = changes.filter((change) =>
       isGeneratedSpecPath(change.path) || isScreenPagePath(change.path),
     )
@@ -3173,10 +3173,17 @@ function findScreenPageArchitectureIssues(
   const specSource = specs.map((spec) => spec.newContent ?? '').join('\n')
   const generatedPageClasses = new Set<string>()
   const generatedPageFolders = new Set<string>()
-  const pageImports = [...specSource.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]@pages\/([^'"]+\.page(?:\.tsx?)?)['"]/g)]
+  const pageImports = [...specSource.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g)]
     .flatMap((match) => {
-      const importPath = match[2]!
-      const relativePath = `pages/${importPath.endsWith('.ts') ? importPath : `${importPath}.ts`}`
+      const specifier = match[2]!.replace(/\\/g, '/')
+      // Framework examples use @pages/.../*.page; accept the common class-based
+      // *Page.ts form too, so architecture validation does not silently ignore
+      // otherwise valid screen page imports produced by a model.
+      const aliasPath = specifier.match(/^@pages\/(.+)$/i)?.[1]
+      const relativePagesPath = specifier.match(/(?:^|\/)pages\/(.+)$/i)?.[1]
+      const importPath = aliasPath ?? relativePagesPath
+      if (!importPath || !/(?:\.page(?:\.tsx?)?|Page(?:\.tsx?))$/i.test(importPath)) return []
+      const relativePath = `pages/${importPath.endsWith('.ts') || importPath.endsWith('.tsx') ? importPath : `${importPath}.ts`}`
       return match[1]!.split(',').map((name) => name.trim().split(/\s+as\s+/)[0]!).filter((name) => /Page$/.test(name))
         .map((className) => ({ className, relativePath }))
     })
@@ -3199,7 +3206,7 @@ function findScreenPageArchitectureIssues(
     if (/(?:Button|Field|Textbox|TextBox|Input|Link|Icon|Checkbox|Card|Tile)Page$/.test(className)) {
       issues.push(`${pagePath} names a page class after a control rather than a screen; choose a descriptive screen/page name from the manual steps and browser evidence.`)
     }
-    const locatorPath = pagePath.replace(/\.page\.tsx?$/i, '.locators.ts')
+    const locatorPath = pagePath.replace(/\.page\.tsx?$/i, '.locators.ts').replace(/Page\.tsx?$/i, 'Locators.ts')
     const locator = changes.find((change) => change.path === locatorPath)
     const locatorSource = locator?.newContent ?? (existsSync(join(repositoryRoot, locatorPath))
       ? readFileSync(join(repositoryRoot, locatorPath), 'utf-8')

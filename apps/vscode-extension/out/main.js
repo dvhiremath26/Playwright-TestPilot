@@ -289213,7 +289213,7 @@ ${dataIssues.map((issue) => `- ${issue}`).join("\n")}`] : [],
   );
   if (hasSpec(changes) && architectureIssuesBeforeRepair.length > 0) {
     const isGeneratedSpecPath = (filePath) => /^tests\/[^/]+\.spec\.tsx?$/i.test(filePath.replace(/\\/g, "/"));
-    const isScreenPagePath = (filePath) => /^pages\/.*\.(?:page|locators)\.tsx?$/i.test(filePath.replace(/\\/g, "/"));
+    const isScreenPagePath = (filePath) => /^pages\/.*\.(?:(?:page|locators)\.tsx?|(?:Page|Locators)\.tsx?)$/i.test(filePath.replace(/\\/g, "/"));
     const screenFiles = changes.filter(
       (change) => isGeneratedSpecPath(change.path) || isScreenPagePath(change.path)
     );
@@ -289405,9 +289405,13 @@ function findScreenPageArchitectureIssues(changes, cases, repositoryRoot) {
   const specSource = specs.map((spec) => spec.newContent ?? "").join("\n");
   const generatedPageClasses = /* @__PURE__ */ new Set();
   const generatedPageFolders = /* @__PURE__ */ new Set();
-  const pageImports = [...specSource.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]@pages\/([^'"]+\.page(?:\.tsx?)?)['"]/g)].flatMap((match) => {
-    const importPath = match[2];
-    const relativePath = `pages/${importPath.endsWith(".ts") ? importPath : `${importPath}.ts`}`;
+  const pageImports = [...specSource.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g)].flatMap((match) => {
+    const specifier = match[2].replace(/\\/g, "/");
+    const aliasPath = specifier.match(/^@pages\/(.+)$/i)?.[1];
+    const relativePagesPath = specifier.match(/(?:^|\/)pages\/(.+)$/i)?.[1];
+    const importPath = aliasPath ?? relativePagesPath;
+    if (!importPath || !/(?:\.page(?:\.tsx?)?|Page(?:\.tsx?))$/i.test(importPath)) return [];
+    const relativePath = `pages/${importPath.endsWith(".ts") || importPath.endsWith(".tsx") ? importPath : `${importPath}.ts`}`;
     return match[1].split(",").map((name) => name.trim().split(/\s+as\s+/)[0]).filter((name) => /Page$/.test(name)).map((className) => ({ className, relativePath }));
   });
   for (const { className, relativePath: pagePath } of pageImports) {
@@ -289427,7 +289431,7 @@ function findScreenPageArchitectureIssues(changes, cases, repositoryRoot) {
     if (/(?:Button|Field|Textbox|TextBox|Input|Link|Icon|Checkbox|Card|Tile)Page$/.test(className)) {
       issues.push(`${pagePath} names a page class after a control rather than a screen; choose a descriptive screen/page name from the manual steps and browser evidence.`);
     }
-    const locatorPath = pagePath.replace(/\.page\.tsx?$/i, ".locators.ts");
+    const locatorPath = pagePath.replace(/\.page\.tsx?$/i, ".locators.ts").replace(/Page\.tsx?$/i, "Locators.ts");
     const locator = changes.find((change) => change.path === locatorPath);
     const locatorSource = locator?.newContent ?? ((0, import_node_fs9.existsSync)((0, import_node_path11.join)(repositoryRoot, locatorPath)) ? (0, import_node_fs9.readFileSync)((0, import_node_path11.join)(repositoryRoot, locatorPath), "utf-8") : "");
     const locatorModule = (0, import_node_path11.basename)(locatorPath).replace(/\.ts$/i, "");

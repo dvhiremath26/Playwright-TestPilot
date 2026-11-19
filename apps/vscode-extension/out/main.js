@@ -287276,7 +287276,12 @@ async function gatherEvidenceForTestCase(browser, options) {
       detail: `Continuing the current browser session at step ${options.resumeFromStepIndex + 1}.`,
       source: browser.provenance ?? { backendId: "playwright-cli", backendLabel: "Playwright CLI", fellBack: false }
     };
-    snapshot = await captureScreen(`Fallback attached to the current page; resuming at step ${options.resumeFromStepIndex + 1}`, currentUrl);
+    const resumeStep = options.steps[options.resumeFromStepIndex];
+    snapshot = await captureScreen(
+      `Fallback attached to the current page; resuming at step ${options.resumeFromStepIndex + 1}`,
+      currentUrl,
+      resumeStep?.action
+    );
   } else {
     const opened = await browser.navigate(options.targetUrl, { signal: options.signal });
     navigation = opened;
@@ -287929,7 +287934,8 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
         child = parent;
       }
       if (!safePath || frameSelectors.length === 0) continue;
-      const rows = await frame.locator('body').evaluate((body, selector) => {
+      let rows = [];
+      try { rows = await frame.locator('body').evaluate((body, selector) => {
         const roots = [body.ownerDocument];
         for (let i = 0; i < roots.length && i < 40; i++) {
           for (const node of roots[i].querySelectorAll('*')) if (node.shadowRoot) roots.push(node.shadowRoot);
@@ -287979,7 +287985,7 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
             const ariaColumn = Number(gridCell.getAttribute('aria-colindex'));
             const siblingCells = Array.from(gridCell.parentElement?.children || []).filter(node => node.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
             const columnIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
-            const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
+            const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableColCell,.sapUiTableColHdr,.sapUiTableCol,.sapMListTblHeaderCell'));
             const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
             tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
             if (gridRow) {
@@ -287992,8 +287998,9 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const id = el.id || '';
           const helpId = el.getAttribute('data-help-id') || '';
           const gridClass = typeof grid?.className === 'string' ? grid.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
-          const gridSelector = grid?.matches('.sapUiTable') ? '.sapUiTable' : grid?.matches('.sapMListTbl') ? '.sapMListTbl' : grid?.matches('[role="grid"]') ? '[role="grid"]' : grid?.matches('[role="table"]') ? '[role="table"]' : 'table';
-          const gridOrdinal = grid ? Array.from(grid.ownerDocument.querySelectorAll(gridSelector)).indexOf(grid) : -1;
+          const gridSelector = grid?.id && idCounts.get(grid.id) === 1 ? '[id=' + JSON.stringify(grid.id) + ']' : grid?.matches('.sapUiTable') ? '.sapUiTable' : grid?.matches('.sapMListTbl') ? '.sapMListTbl' : grid?.matches('[role="grid"]') ? '[role="grid"]' : grid?.matches('[role="table"]') ? '[role="table"]' : 'table';
+          const gridRoot = grid?.getRootNode() || grid?.ownerDocument;
+          const gridOrdinal = grid && gridRoot ? Array.from(gridRoot.querySelectorAll(gridSelector)).indexOf(grid) : -1;
           const tableGridKey = grid ? String(grid.id || gridClass || grid.tagName.toLowerCase()) + ':' + gridOrdinal : '';
           const tableCellIndex = gridCell && gridRow ? Array.from(gridRow.querySelectorAll(cellSelector)).indexOf(gridCell) : -1;
           const tableCellExpression = gridOrdinal >= 0 && tableRowIndex >= 0 && tableCellIndex >= 0
@@ -288004,7 +288011,7 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const context = [tableColumn, el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || ''), controlType].filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 180);
           return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), helpId, uniqueHelpId: Boolean(helpId && helpIdCounts.get(helpId) === 1), searchButton, tableField: Boolean(tableColumn && (role === 'textbox' || role === 'combobox' || role === 'gridcell')), tableGridKey, tableColumnName: tableColumn, tableRowIndex, tableCellValue, tableCellExpression, context, navigation: Boolean(nav) };
         });
-      }, selector);
+      }, selector); } catch { continue; }
       const searchboxes = rows.filter(row => row.role === 'searchbox').length;
       for (const row of rows) {
         if (!row.name && !(row.role === 'searchbox' && searchboxes === 1) && !row.uniqueHelpId && !(row.searchButton && row.uniqueId)) continue;
@@ -288073,7 +288080,7 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const ariaColumn = Number(gridCell.getAttribute('aria-colindex'));
           const siblingCells = Array.from(gridCell.parentElement?.children || []).filter(node => node.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
           const columnIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
-          const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
+          const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableColCell,.sapUiTableColHdr,.sapUiTableCol,.sapMListTblHeaderCell'));
           const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
           tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
           if (gridRow) {
@@ -288084,8 +288091,9 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
         const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || tableColumn || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
         const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
         const gridClass = typeof grid?.className === 'string' ? grid.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
-        const gridSelector = grid?.matches('.sapUiTable') ? '.sapUiTable' : grid?.matches('.sapMListTbl') ? '.sapMListTbl' : grid?.matches('[role="grid"]') ? '[role="grid"]' : grid?.matches('[role="table"]') ? '[role="table"]' : 'table';
-        const gridOrdinal = grid ? Array.from(grid.ownerDocument.querySelectorAll(gridSelector)).indexOf(grid) : -1;
+        const gridSelector = grid?.id && idCounts.get(grid.id) === 1 ? '[id=' + JSON.stringify(grid.id) + ']' : grid?.matches('.sapUiTable') ? '.sapUiTable' : grid?.matches('.sapMListTbl') ? '.sapMListTbl' : grid?.matches('[role="grid"]') ? '[role="grid"]' : grid?.matches('[role="table"]') ? '[role="table"]' : 'table';
+        const gridRoot = grid?.getRootNode() || grid?.ownerDocument;
+        const gridOrdinal = grid && gridRoot ? Array.from(gridRoot.querySelectorAll(gridSelector)).indexOf(grid) : -1;
         const tableGridKey = grid ? String(grid.id || gridClass || grid.tagName.toLowerCase()) + ':' + gridOrdinal : '';
         const tableCellIndex = gridCell && gridRow ? Array.from(gridRow.querySelectorAll(cellSelector)).indexOf(gridCell) : -1;
         const tableCellExpression = gridOrdinal >= 0 && tableRowIndex >= 0 && tableCellIndex >= 0
@@ -288272,7 +288280,7 @@ function selectRepeatedTableSnapshotTarget(snapshot, candidates, requestedTarget
     const context = normalizeWords(candidate.context ?? "");
     return name === wantedColumn || context.split("|").some((part) => part.trim() === wantedColumn);
   });
-  if (matches.length < 2) return void 0;
+  if (matches.length === 0) return void 0;
   const first = matches[0];
   const key = `${normalizeWords(first.role ?? "")}:${wantedColumn}`;
   const nextIndex = cursors.get(key)?.index ?? 0;

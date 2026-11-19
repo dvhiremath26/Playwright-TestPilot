@@ -60,6 +60,8 @@ export interface PlaywrightMcpAdapterOptions {
   cwd?: string
   /** Install directory for a direct Node launch of @playwright/mcp (avoids Windows npx stdio hangs). */
   runtimeDirectory?: string
+  /** Existing project roots to search before attempting a network install. */
+  packageSearchDirectories?: string[]
   /** Surface one-time fallback setup progress to the extension UI. */
   onStatus?: (message: string) => void
   env?: Record<string, string>
@@ -465,7 +467,7 @@ export class PlaywrightMcpAdapter implements BrowserTool {
       ]
     if (this.opts.runtimeDirectory) {
       this.opts.onStatus?.('Playwright CLI could not handle the current screen. Preparing the Playwright MCP fallback now; the browser will stay on the current page.')
-      const mcpCli = await ensurePlaywrightMcpCli(this.opts.runtimeDirectory)
+      const mcpCli = await ensurePlaywrightMcpCli(this.opts.runtimeDirectory, this.opts.packageSearchDirectories)
       command = findNodeExecutable()
       // Spawn node.exe directly with stdio pipes. On Windows, cmd.exe -> npx.cmd
       // can leave the MCP stdio transport disconnected even though the server starts.
@@ -570,10 +572,19 @@ export class PlaywrightMcpAdapter implements BrowserTool {
   }
 }
 
-async function ensurePlaywrightMcpCli(runtimeDirectory: string): Promise<string> {
+async function ensurePlaywrightMcpCli(runtimeDirectory: string, packageSearchDirectories: string[] = []): Promise<string> {
   const root = resolve(runtimeDirectory)
   const cliPath = join(root, 'node_modules', '@playwright', 'mcp', 'cli.js')
   if (existsSync(cliPath)) return cliPath
+  for (const packageRoot of packageSearchDirectories) {
+    const normalized = resolve(packageRoot)
+    const candidates = [
+      join(normalized, 'node_modules', '@playwright', 'mcp', 'cli.js'),
+      join(normalized, '@playwright', 'mcp', 'cli.js'),
+    ]
+    const existingCli = candidates.find((candidate) => existsSync(candidate))
+    if (existingCli) return existingCli
+  }
 
   const key = process.platform === 'win32' ? root.toLowerCase() : root
   const existing = mcpPackageInstallJobs.get(key)

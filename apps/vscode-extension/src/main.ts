@@ -151,6 +151,7 @@ class WorkspaceService implements vscode.Disposable {
             command: 'node',
             serverArgs: [],
             runtimeDirectory: join(cfg.stateDir, 'tools', 'playwright-mcp'),
+            packageSearchDirectories: [cfg.frameworkRepo],
             onStatus: (message) => this.panel.postStatus(message),
           },
         })

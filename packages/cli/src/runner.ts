@@ -1758,6 +1758,63 @@ async function inspectSapTableColumnTargets(
             const expression = 'locator(' + JSON.stringify(gridSelector) + ').nth(' + gridIndex + ').locator(' + JSON.stringify(rowSelector) + ').nth(' + selected.rowIndex + ').locator(' + JSON.stringify(cellSelector) + ').nth(' + selected.columnIndex + ')';
             output.push({ role: 'gridcell', name: selected.header, tableField: true, tableGridKey: gridKey, tableColumnName: selected.header, tableRowIndex: selected.rowIndex, tableCellValue: '', tableCellExpression: expression, expression });
           }
+          // SAP versions sometimes render the header outside the semantic grid
+          // container or use nonstandard row/cell roles. As a second DOM-backed
+          // strategy, align the visible header and empty cells by their on-screen
+          // x coordinate, while still returning a live grid/row/cell locator.
+          if (output.length === 0) {
+            const headers = Array.from(body.querySelectorAll('.sapUiTableCol,[role="columnheader"],.sapMListTblHeaderCell,th'))
+              .filter(header => visible(header) && (norm(label(header)) === wantedColumn || norm(label(header)).includes(wantedColumn)));
+            const seenColumns = new Set();
+            for (const header of headers) {
+              let root = header.closest('.sapUiTable,.sapMListTbl,[role="grid"],[role="table"],table');
+              if (!root) {
+                let ancestor = header.parentElement;
+                for (let depth = 0; ancestor && depth < 10 && !root; depth++, ancestor = ancestor.parentElement) {
+                  if (ancestor.querySelector('.sapUiTableCell,[role="gridcell"],[role="cell"],td,.sapMListTblCell')) root = ancestor;
+                }
+              }
+              if (!root || !visible(root)) continue;
+              const headerRect = header.getBoundingClientRect();
+              const centerX = headerRect.left + headerRect.width / 2;
+              const columnKey = String(root.id || root.className || root.tagName) + ':' + Math.round(centerX / 8);
+              if (seenColumns.has(columnKey)) continue;
+              seenColumns.add(columnKey);
+              const sapRows = Array.from(root.querySelectorAll('.sapUiTableTr'));
+              const rowSelector = sapRows.length ? '.sapUiTableTr' : fallbackRowSelector;
+              const rows = Array.from(root.querySelectorAll(rowSelector));
+              let selected;
+              for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+                const row = rows[rowIndex];
+                if (!visible(row)) continue;
+                const sapCells = Array.from(row.querySelectorAll('.sapUiTableCell')).filter(cell => cell.closest(rowSelector) === row);
+                const cellSelector = sapCells.length ? '.sapUiTableCell' : fallbackCellSelector;
+                const allCells = Array.from(row.querySelectorAll(cellSelector)).filter(cell => cell.closest(rowSelector) === row);
+                const cell = allCells.find(candidate => {
+                  const rect = candidate.getBoundingClientRect();
+                  return visible(candidate) && centerX >= rect.left - 1 && centerX <= rect.right + 1;
+                });
+                if (!cell) continue;
+                const editor = cell.querySelector('input,textarea,select,[contenteditable="true"],[role="textbox"]');
+                const value = editor && 'value' in editor ? String(editor.value || '').trim() : (cell.innerText || cell.textContent || '').replace(/\\s+/g, ' ').trim();
+                if (!value) {
+                  const cellIndex = allCells.indexOf(cell);
+                  selected = { rowIndex, cellIndex, cellSelector, rowSelector };
+                  break;
+                }
+              }
+              if (!selected) continue;
+              const domRoot = root.getRootNode();
+              const gridSelector = root.id && domRoot.querySelectorAll('[id=' + CSS.escape(root.id) + ']').length === 1
+                ? '[id=' + JSON.stringify(root.id) + ']'
+                : root.matches('.sapUiTable') ? '.sapUiTable' : root.matches('.sapMListTbl') ? '.sapMListTbl' : root.matches('[role="grid"]') ? '[role="grid"]' : root.matches('[role="table"]') ? '[role="table"]' : 'table';
+              const gridIndex = Array.from(domRoot.querySelectorAll(gridSelector)).indexOf(root);
+              if (gridIndex < 0) continue;
+              const gridKey = String(root.id || root.className || root.tagName) + ':' + gridIndex;
+              const expression = 'locator(' + JSON.stringify(gridSelector) + ').nth(' + gridIndex + ').locator(' + JSON.stringify(selected.rowSelector) + ').nth(' + selected.rowIndex + ').locator(' + JSON.stringify(selected.cellSelector) + ').nth(' + selected.cellIndex + ')';
+              output.push({ role: 'gridcell', name: label(header), tableField: true, tableGridKey: gridKey, tableColumnName: label(header), tableRowIndex: selected.rowIndex, tableCellValue: '', tableCellExpression: expression, expression });
+            }
+          }
           return output;
         }, wanted);
       } catch { continue; }

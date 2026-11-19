@@ -1062,7 +1062,9 @@ export async function gatherEvidenceForTestCase(
     let observed: BrowserSnapshot | undefined
     for (let attempt = 0; attempt < 3 && !observed; attempt++) {
       observed = await browser.capture(undefined, { signal: options.signal, timeoutMs: 20_000 })
-      if (!observed && attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750))
+      const startupHandshakeFailed = /MCP request ["'](?:initialize|tools\/list)["'] timed out/i.test(browser.lastBackendFailure ?? '')
+      if (!observed && attempt < 2 && !startupHandshakeFailed) await new Promise((resolve) => setTimeout(resolve, 750))
+      if (startupHandshakeFailed) break
     }
     if (!observed && nextStepAction) {
       const nextAction = parseReplayAction(nextStepAction)

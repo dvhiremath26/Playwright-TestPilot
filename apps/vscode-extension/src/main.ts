@@ -146,12 +146,11 @@ class WorkspaceService implements vscode.Disposable {
           cdpEndpoint: browserHost.endpoint,
           // The shared Chromium host is headed, private, and isolated to this run.
           mcp: {
-            // Spawn only after the CLI primary fails. Use cmd.exe explicitly on Windows
-            // because npm exposes npx as a .cmd shim that spawn(shell:false) cannot run.
-            command: process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : 'npx',
-            serverArgs: process.platform === 'win32'
-              ? ['/d', '/s', '/c', 'npx -y @playwright/mcp@latest']
-              : ['-y', '@playwright/mcp@latest'],
+            // Launch the installed MCP cli.js directly with node.exe so MCP stdio
+            // is not piped through npx.cmd on Windows.
+            command: 'node',
+            serverArgs: [],
+            runtimeDirectory: join(cfg.stateDir, 'tools', 'playwright-mcp'),
           },
         })
         // The manual case is the instruction to inspect every screen it reaches.

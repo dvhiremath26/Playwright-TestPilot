@@ -18,6 +18,9 @@
  */
 
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { redact, spawnErrorMessage } from './redaction-helpers.ts'
 import { PAGE_READINESS_CODE } from './page-readiness.ts'
 
@@ -35,7 +38,9 @@ import type {
 // Keep tool calls alive long enough for the browser to settle and return evidence.
 const DEFAULT_TIMEOUT_MS = 75_000
 /** First launch can include npx startup and CDP attachment; give initialization room to finish. */
-const INIT_TIMEOUT_MS = 30_000
+const INIT_TIMEOUT_MS = 45_000
+
+const mcpPackageInstallJobs = new Map<string, Promise<string>>()
 
 /** Cap on how much we read from the server — screenshot payloads can be large. */
 const MAX_STDOUT_BYTES = 256 * 1024
@@ -53,6 +58,8 @@ export interface PlaywrightMcpAdapterOptions {
   allowedHosts?: string[]
   /** Working directory. */
   cwd?: string
+  /** Install directory for a direct Node launch of @playwright/mcp (avoids Windows npx stdio hangs). */
+  runtimeDirectory?: string
   env?: Record<string, string>
 }
 
@@ -412,7 +419,8 @@ export class PlaywrightMcpAdapter implements BrowserTool {
     return new Promise<RpcMessage>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`MCP request "${method}" timed out after ${timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`))
+        const stderr = this.stderrBuf.trim().slice(-900)
+        reject(new Error(`MCP request "${method}" timed out after ${timeoutMs ?? DEFAULT_TIMEOUT_MS}ms${stderr ? `; server stderr: ${stderr}` : ''}`))
       }, timeoutMs ?? DEFAULT_TIMEOUT_MS)
 
       this.pending.set(id, {
@@ -429,20 +437,28 @@ export class PlaywrightMcpAdapter implements BrowserTool {
     })
   }
 
-  private spawnIfAbsent(): Promise<void> {
+  private async spawnIfAbsent(): Promise<void> {
     if (this.proc) return Promise.resolve()
     if (!this.opts.command) {
-      return Promise.reject(new Error('MCP command not configured'))
+      throw new Error('MCP command not configured')
     }
 
-    const command = this.opts.command
-    return new Promise<void>((resolve, reject) => {
-      const args = [
+    let command = this.opts.command
+    let args = [
         ...(this.opts.serverArgs ?? ['mcp']),
         ...(this.opts.extraServerArgs ?? []),
         ...(this.opts.browser ? ['--browser', this.opts.browser] : []),
         ...(this.opts.allowedHosts?.length ? ['--allowed-hosts', this.opts.allowedHosts.join(',')] : []),
       ]
+    if (this.opts.runtimeDirectory) {
+      const mcpCli = await ensurePlaywrightMcpCli(this.opts.runtimeDirectory)
+      command = findNodeExecutable()
+      // Spawn node.exe directly with stdio pipes. On Windows, cmd.exe -> npx.cmd
+      // can leave the MCP stdio transport disconnected even though the server starts.
+      args = [mcpCli, ...(this.opts.extraServerArgs ?? []), ...(this.opts.browser ? ['--browser', this.opts.browser] : []), ...(this.opts.allowedHosts?.length ? ['--allowed-hosts', this.opts.allowedHosts.join(',')] : [])]
+    }
+
+    await new Promise<void>((resolveSpawn, rejectSpawn) => {
       // Server-owned browser profiles must be isolated. With CDP/extension attach,
       // isolation is provided by TestPilot's temporary browser context instead.
       const attachesToExistingBrowser = args.some((arg) =>
@@ -461,6 +477,8 @@ export class PlaywrightMcpAdapter implements BrowserTool {
       this.proc = child
       this.stderrBuf = ''
 
+      child.once('spawn', () => resolveSpawn())
+
       child.on('error', (err) => {
         const message = spawnErrorMessage(err, command)
         if (this.proc === child) {
@@ -470,7 +488,7 @@ export class PlaywrightMcpAdapter implements BrowserTool {
           this.initialized = false
           this.toolSchemas.clear()
         }
-        if (!this.initialized) reject(new Error(message))
+        if (!this.initialized) rejectSpawn(new Error(message))
       })
 
       child.on('close', () => {
@@ -504,7 +522,6 @@ export class PlaywrightMcpAdapter implements BrowserTool {
         if (this.stderrBuf.length < MAX_STDOUT_BYTES) this.stderrBuf += chunk.toString('utf-8')
       })
 
-      resolve()
     })
   }
 
@@ -537,4 +554,82 @@ export class PlaywrightMcpAdapter implements BrowserTool {
     this.pending.clear()
     if (child && !child.killed) child.kill('SIGTERM')
   }
+}
+
+async function ensurePlaywrightMcpCli(runtimeDirectory: string): Promise<string> {
+  const root = resolve(runtimeDirectory)
+  const cliPath = join(root, 'node_modules', '@playwright', 'mcp', 'cli.js')
+  if (existsSync(cliPath)) return cliPath
+
+  const key = process.platform === 'win32' ? root.toLowerCase() : root
+  const existing = mcpPackageInstallJobs.get(key)
+  if (existing) return existing
+  const installation = installPlaywrightMcp(root, cliPath)
+  mcpPackageInstallJobs.set(key, installation)
+  try {
+    return await installation
+  } finally {
+    if (mcpPackageInstallJobs.get(key) === installation) mcpPackageInstallJobs.delete(key)
+  }
+}
+
+async function installPlaywrightMcp(runtimeDirectory: string, cliPath: string): Promise<string> {
+  await mkdir(runtimeDirectory, { recursive: true })
+  const node = findNodeExecutable()
+  const args = ['install', '--prefix', runtimeDirectory, '--no-save', '--no-audit', '--no-fund', '--loglevel=error', '@playwright/mcp@latest']
+  let command = node
+  let installArgs = args
+
+  if (process.platform === 'win32') {
+    const npmCli = join(dirname(node), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    if (!existsSync(npmCli)) {
+      throw new Error(`Could not find npm's JavaScript launcher beside Node at ${dirname(node)}; cannot prepare the Playwright MCP fallback.`)
+    }
+    installArgs = [npmCli, ...args]
+  } else {
+    command = 'npm'
+  }
+
+  await new Promise<void>((resolveInstall, rejectInstall) => {
+    const child = spawn(command, installArgs, {
+      cwd: runtimeDirectory,
+      env: { ...process.env, npm_config_yes: 'true' },
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+    })
+    let stderr = ''
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (stderr.length < 2_000) stderr += chunk.toString('utf8')
+    })
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM')
+      rejectInstall(new Error('Timed out after 180 seconds installing the Playwright MCP fallback package.'))
+    }, 180_000)
+    child.once('error', (error) => {
+      clearTimeout(timeout)
+      rejectInstall(new Error(`Could not install the Playwright MCP fallback package: ${error.message}`))
+    })
+    child.once('exit', (code) => {
+      clearTimeout(timeout)
+      if (code === 0) resolveInstall()
+      else rejectInstall(new Error(`Installing the Playwright MCP fallback package exited with code ${String(code)}.${stderr.trim() ? ` npm detail: ${stderr.trim().slice(-1_200)}` : ''}`))
+    })
+  })
+
+  if (!existsSync(cliPath)) {
+    throw new Error(`Playwright MCP installation completed but its CLI was not found at ${cliPath}.`)
+  }
+  return cliPath
+}
+
+function findNodeExecutable(): string {
+  if (process.platform !== 'win32') return process.execPath
+  const pathValue = process.env.PATH ?? process.env.Path ?? ''
+  const nodeOnPath = pathValue
+    .split(delimiter)
+    .map((directory) => join(directory.replace(/^"|"$/g, ''), 'node.exe'))
+    .find((candidate) => existsSync(candidate))
+  if (nodeOnPath) return nodeOnPath
+  if (/\\node\.exe$/i.test(process.execPath)) return process.execPath
+  throw new Error('Could not find node.exe on PATH to launch Playwright MCP directly on Windows.')
 }

@@ -486,7 +486,7 @@ async function httpPost(url, body, headers, timeoutMs) {
   const { hostname, pathname, protocol } = new URL(url);
   const isHttps = protocol === "https:";
   const mod = isHttps ? await import("node:https") : await import("node:http");
-  return new Promise((resolve5, reject) => {
+  return new Promise((resolve6, reject) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const req = mod.request(
@@ -506,7 +506,7 @@ async function httpPost(url, body, headers, timeoutMs) {
           for (const [k, v] of Object.entries(res.headers)) {
             if (v !== void 0) rawHeaders[k] = Array.isArray(v) ? v.join(", ") : String(v);
           }
-          resolve5({
+          resolve6({
             status: res.statusCode ?? 0,
             body: Buffer.concat(chunks).toString("utf-8"),
             headers: rawHeaders
@@ -543,13 +543,13 @@ function createOpenAICompatProvider(cfg) {
       const modelsPath = pathname.endsWith("/chat/completions") ? cfg.baseUrl.replace(/\/chat\/completions$/, "/models") : cfg.baseUrl + "/models";
       const isHttps = protocol === "https:";
       const mod = isHttps ? await import("node:https") : await import("node:http");
-      const result = await new Promise((resolve5, reject) => {
+      const result = await new Promise((resolve6, reject) => {
         const req = mod.request(
           { hostname, path: new URL(modelsPath).pathname, method: "GET", headers: { Authorization: `Bearer ${apiKey}` } },
           (res) => {
             const chunks = [];
             res.on("data", (c) => chunks.push(c));
-            res.on("end", () => resolve5({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
+            res.on("end", () => resolve6({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
           }
         );
         req.on("error", reject);
@@ -4513,7 +4513,7 @@ var require_worksheet = __commonJS({
       // =========================================================================
       // Worksheet Protection
       protect(password, options) {
-        return new Promise((resolve5) => {
+        return new Promise((resolve6) => {
           this.sheetProtection = {
             sheet: true
           };
@@ -4537,7 +4537,7 @@ var require_worksheet = __commonJS({
               delete this.sheetProtection.spinCount;
             }
           }
-          resolve5();
+          resolve6();
         });
       }
       unprotect() {
@@ -5250,7 +5250,7 @@ var require_BufferList = __commonJS({
         this.head = this.tail = null;
         this.length = 0;
       };
-      BufferList.prototype.join = function join9(s) {
+      BufferList.prototype.join = function join10(s) {
         if (this.length === 0) return "";
         var p = this.head;
         var ret2 = "" + p.data;
@@ -7225,8 +7225,8 @@ var require_lib2 = __commonJS({
         return this;
       }
       var p = this.constructor;
-      return this.then(resolve6, reject2);
-      function resolve6(value) {
+      return this.then(resolve7, reject2);
+      function resolve7(value) {
         function yes() {
           return value;
         }
@@ -7379,8 +7379,8 @@ var require_lib2 = __commonJS({
       }
       return out;
     }
-    Promise2.resolve = resolve5;
-    function resolve5(value) {
+    Promise2.resolve = resolve6;
+    function resolve6(value) {
       if (value instanceof this) {
         return value;
       }
@@ -7915,10 +7915,10 @@ var require_utils = __commonJS({
           if (typeof Blob.prototype.arrayBuffer !== "undefined") {
             return data.arrayBuffer();
           } else if (typeof FileReader !== "undefined") {
-            return new external.Promise(function(resolve5, reject) {
+            return new external.Promise(function(resolve6, reject) {
               var reader = new FileReader();
               reader.onload = function(e) {
-                resolve5(e.target.result);
+                resolve6(e.target.result);
               };
               reader.onerror = function(e) {
                 reject(e.target.error);
@@ -8477,7 +8477,7 @@ var require_StreamHelper = __commonJS({
       }
     }
     function accumulate(helper, updateCallback) {
-      return new external.Promise(function(resolve5, reject) {
+      return new external.Promise(function(resolve6, reject) {
         var dataArray = [];
         var chunkType = helper._internalType, resultType = helper._outputType, mimeType = helper._mimeType;
         helper.on("data", function(data, meta) {
@@ -8491,7 +8491,7 @@ var require_StreamHelper = __commonJS({
         }).on("end", function() {
           try {
             var result = transformZipOutput(resultType, concat(chunkType, dataArray), mimeType);
-            resolve5(result);
+            resolve6(result);
           } catch (e) {
             reject(e);
           }
@@ -14604,7 +14604,7 @@ var require_load = __commonJS({
     var Crc32Probe = require_Crc32Probe();
     var nodejsUtils = require_nodejsUtils();
     function checkEntryCRC32(zipEntry) {
-      return new external.Promise(function(resolve5, reject) {
+      return new external.Promise(function(resolve6, reject) {
         var worker = zipEntry.decompressed.getContentWorker().pipe(new Crc32Probe());
         worker.on("error", function(e) {
           reject(e);
@@ -14612,7 +14612,7 @@ var require_load = __commonJS({
           if (worker.streamInfo.crc32 !== zipEntry.decompressed.crc32) {
             reject(new Error("Corrupted zip : CRC32 mismatch"));
           } else {
-            resolve5();
+            resolve6();
           }
         }).resume();
       });
@@ -14840,7 +14840,7 @@ var require_buffer_list = __commonJS({
         }
       }, {
         key: "join",
-        value: function join9(s) {
+        value: function join10(s) {
           if (this.length === 0) return "";
           var p = this.head;
           var ret2 = "" + p.data;
@@ -16164,14 +16164,14 @@ var require_async_iterator = __commonJS({
       };
     }
     function readAndResolve(iter) {
-      var resolve5 = iter[kLastResolve];
-      if (resolve5 !== null) {
+      var resolve6 = iter[kLastResolve];
+      if (resolve6 !== null) {
         var data = iter[kStream].read();
         if (data !== null) {
           iter[kLastPromise] = null;
           iter[kLastResolve] = null;
           iter[kLastReject] = null;
-          resolve5(createIterResult(data, false));
+          resolve6(createIterResult(data, false));
         }
       }
     }
@@ -16179,13 +16179,13 @@ var require_async_iterator = __commonJS({
       process.nextTick(readAndResolve, iter);
     }
     function wrapForNext(lastPromise, iter) {
-      return function(resolve5, reject) {
+      return function(resolve6, reject) {
         lastPromise.then(function() {
           if (iter[kEnded]) {
-            resolve5(createIterResult(void 0, true));
+            resolve6(createIterResult(void 0, true));
             return;
           }
-          iter[kHandlePromise](resolve5, reject);
+          iter[kHandlePromise](resolve6, reject);
         }, reject);
       };
     }
@@ -16205,12 +16205,12 @@ var require_async_iterator = __commonJS({
           return Promise.resolve(createIterResult(void 0, true));
         }
         if (this[kStream].destroyed) {
-          return new Promise(function(resolve5, reject) {
+          return new Promise(function(resolve6, reject) {
             process.nextTick(function() {
               if (_this[kError]) {
                 reject(_this[kError]);
               } else {
-                resolve5(createIterResult(void 0, true));
+                resolve6(createIterResult(void 0, true));
               }
             });
           });
@@ -16233,13 +16233,13 @@ var require_async_iterator = __commonJS({
       return this;
     }), _defineProperty(_Object$setPrototypeO, "return", function _return() {
       var _this2 = this;
-      return new Promise(function(resolve5, reject) {
+      return new Promise(function(resolve6, reject) {
         _this2[kStream].destroy(null, function(err) {
           if (err) {
             reject(err);
             return;
           }
-          resolve5(createIterResult(void 0, true));
+          resolve6(createIterResult(void 0, true));
         });
       });
     }), _Object$setPrototypeO), AsyncIteratorPrototype);
@@ -16261,15 +16261,15 @@ var require_async_iterator = __commonJS({
         value: stream._readableState.endEmitted,
         writable: true
       }), _defineProperty(_Object$create, kHandlePromise, {
-        value: function value(resolve5, reject) {
+        value: function value(resolve6, reject) {
           var data = iterator[kStream].read();
           if (data) {
             iterator[kLastPromise] = null;
             iterator[kLastResolve] = null;
             iterator[kLastReject] = null;
-            resolve5(createIterResult(data, false));
+            resolve6(createIterResult(data, false));
           } else {
-            iterator[kLastResolve] = resolve5;
+            iterator[kLastResolve] = resolve6;
             iterator[kLastReject] = reject;
           }
         },
@@ -16288,12 +16288,12 @@ var require_async_iterator = __commonJS({
           iterator[kError] = err;
           return;
         }
-        var resolve5 = iterator[kLastResolve];
-        if (resolve5 !== null) {
+        var resolve6 = iterator[kLastResolve];
+        if (resolve6 !== null) {
           iterator[kLastPromise] = null;
           iterator[kLastResolve] = null;
           iterator[kLastReject] = null;
-          resolve5(createIterResult(void 0, true));
+          resolve6(createIterResult(void 0, true));
         }
         iterator[kEnded] = true;
       });
@@ -16308,7 +16308,7 @@ var require_async_iterator = __commonJS({
 var require_from = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/from.js"(exports2, module2) {
     "use strict";
-    function asyncGeneratorStep(gen, resolve5, reject, _next, _throw, key, arg) {
+    function asyncGeneratorStep(gen, resolve6, reject, _next, _throw, key, arg) {
       try {
         var info2 = gen[key](arg);
         var value = info2.value;
@@ -16317,7 +16317,7 @@ var require_from = __commonJS({
         return;
       }
       if (info2.done) {
-        resolve5(value);
+        resolve6(value);
       } else {
         Promise.resolve(value).then(_next, _throw);
       }
@@ -16325,13 +16325,13 @@ var require_from = __commonJS({
     function _asyncToGenerator(fn) {
       return function() {
         var self2 = this, args = arguments;
-        return new Promise(function(resolve5, reject) {
+        return new Promise(function(resolve6, reject) {
           var gen = fn.apply(self2, args);
           function _next(value) {
-            asyncGeneratorStep(gen, resolve5, reject, _next, _throw, "next", value);
+            asyncGeneratorStep(gen, resolve6, reject, _next, _throw, "next", value);
           }
           function _throw(err) {
-            asyncGeneratorStep(gen, resolve5, reject, _next, _throw, "throw", err);
+            asyncGeneratorStep(gen, resolve6, reject, _next, _throw, "throw", err);
           }
           _next(void 0);
         });
@@ -17418,14 +17418,14 @@ var require_utils2 = __commonJS({
       nop() {
       },
       promiseImmediate(value) {
-        return new Promise((resolve5) => {
+        return new Promise((resolve6) => {
           if (global.setImmediate) {
             setImmediate(() => {
-              resolve5(value);
+              resolve6(value);
             });
           } else {
             setTimeout(() => {
-              resolve5(value);
+              resolve6(value);
             }, 1);
           }
         });
@@ -17525,9 +17525,9 @@ var require_utils2 = __commonJS({
       },
       fs: {
         exists(path3) {
-          return new Promise((resolve5) => {
+          return new Promise((resolve6) => {
             fs.access(path3, fs.constants.F_OK, (err) => {
-              resolve5(!err);
+              resolve6(!err);
             });
           });
         }
@@ -17750,9 +17750,9 @@ var require_stream_buf = __commonJS({
       },
       async _pipe(chunk) {
         const write = function(pipe) {
-          return new Promise((resolve5) => {
+          return new Promise((resolve6) => {
             pipe.write(chunk.toBuffer(), () => {
-              resolve5();
+              resolve6();
             });
           });
         };
@@ -29629,12 +29629,12 @@ var require_xlsx = __commonJS({
     var VmlNotesXform = require_vml_notes_xform();
     var theme1Xml = require_theme1();
     function fsReadFileAsync(filename, options) {
-      return new Promise((resolve5, reject) => {
+      return new Promise((resolve6, reject) => {
         fs.readFile(filename, options, (error, data) => {
           if (error) {
             reject(error);
           } else {
-            resolve5(data);
+            resolve6(data);
           }
         });
       });
@@ -29761,7 +29761,7 @@ var require_xlsx = __commonJS({
         if (lastDot >= 1) {
           const extension = filename.substr(lastDot + 1);
           const name = filename.substr(0, lastDot);
-          await new Promise((resolve5, reject) => {
+          await new Promise((resolve6, reject) => {
             const streamBuf = new StreamBuf();
             streamBuf.on("finish", () => {
               model.mediaIndex[filename] = model.media.length;
@@ -29773,7 +29773,7 @@ var require_xlsx = __commonJS({
                 buffer: streamBuf.toBuffer()
               };
               model.media.push(medium);
-              resolve5();
+              resolve6();
             });
             entry.on("error", (error) => {
               reject(error);
@@ -29798,13 +29798,13 @@ var require_xlsx = __commonJS({
         model.vmlDrawings[`../drawings/${name}.vml`] = vmlDrawing;
       }
       async _processThemeEntry(entry, model, name) {
-        await new Promise((resolve5, reject) => {
+        await new Promise((resolve6, reject) => {
           const stream = new StreamBuf();
           entry.on("error", reject);
           stream.on("error", reject);
           stream.on("finish", () => {
             model.themes[name] = stream.read().toString();
-            resolve5();
+            resolve6();
           });
           entry.pipe(stream);
         });
@@ -30112,9 +30112,9 @@ var require_xlsx = __commonJS({
         });
       }
       _finalize(zip) {
-        return new Promise((resolve5, reject) => {
+        return new Promise((resolve6, reject) => {
           zip.on("finish", () => {
-            resolve5(this);
+            resolve6(this);
           });
           zip.on("error", reject);
           zip.finalize();
@@ -30174,9 +30174,9 @@ var require_xlsx = __commonJS({
       }
       writeFile(filename, options) {
         const stream = fs.createWriteStream(filename);
-        return new Promise((resolve5, reject) => {
+        return new Promise((resolve6, reject) => {
           stream.on("finish", () => {
-            resolve5();
+            resolve6();
           });
           stream.on("error", (error) => {
             reject(error);
@@ -34301,7 +34301,7 @@ var require_csv = __commonJS({
       }
       read(stream, options) {
         options = options || {};
-        return new Promise((resolve5, reject) => {
+        return new Promise((resolve6, reject) => {
           const worksheet = this.workbook.addWorksheet(options.sheetName);
           const dateFormats = options.dateFormats || [
             "YYYY-MM-DD[T]HH:mm:ssZ",
@@ -34341,7 +34341,7 @@ var require_csv = __commonJS({
           }).on("end", () => {
             csvStream.emit("worksheet", worksheet);
           });
-          csvStream.on("worksheet", resolve5).on("error", reject);
+          csvStream.on("worksheet", resolve6).on("error", reject);
           stream.pipe(csvStream);
         });
       }
@@ -34354,12 +34354,12 @@ var require_csv = __commonJS({
         );
       }
       write(stream, options) {
-        return new Promise((resolve5, reject) => {
+        return new Promise((resolve6, reject) => {
           options = options || {};
           const worksheet = this.workbook.getWorksheet(options.sheetName || options.sheetId);
           const csvStream = fastCsv.format(options.formatterOptions);
           stream.on("finish", () => {
-            resolve5();
+            resolve6();
           });
           csvStream.on("error", reject);
           csvStream.pipe(stream);
@@ -35598,9 +35598,9 @@ var require_readdir_glob = __commonJS({
     var fs = require("fs");
     var { EventEmitter } = require("events");
     var { Minimatch } = require_minimatch();
-    var { resolve: resolve5 } = require("path");
+    var { resolve: resolve6 } = require("path");
     function readdir(dir, strict) {
-      return new Promise((resolve6, reject) => {
+      return new Promise((resolve7, reject) => {
         fs.readdir(dir, { withFileTypes: true }, (err, files) => {
           if (err) {
             switch (err.code) {
@@ -35608,7 +35608,7 @@ var require_readdir_glob = __commonJS({
                 if (strict) {
                   reject(err);
                 } else {
-                  resolve6([]);
+                  resolve7([]);
                 }
                 break;
               case "ENOTSUP":
@@ -35618,7 +35618,7 @@ var require_readdir_glob = __commonJS({
               case "ENAMETOOLONG":
               // Filename too long
               case "UNKNOWN":
-                resolve6([]);
+                resolve7([]);
                 break;
               case "ELOOP":
               // Too many levels of symbolic links
@@ -35627,30 +35627,30 @@ var require_readdir_glob = __commonJS({
                 break;
             }
           } else {
-            resolve6(files);
+            resolve7(files);
           }
         });
       });
     }
     function stat(file, followSymlinks) {
-      return new Promise((resolve6, reject) => {
+      return new Promise((resolve7, reject) => {
         const statFunc = followSymlinks ? fs.stat : fs.lstat;
         statFunc(file, (err, stats) => {
           if (err) {
             switch (err.code) {
               case "ENOENT":
                 if (followSymlinks) {
-                  resolve6(stat(file, false));
+                  resolve7(stat(file, false));
                 } else {
-                  resolve6(null);
+                  resolve7(null);
                 }
                 break;
               default:
-                resolve6(null);
+                resolve7(null);
                 break;
             }
           } else {
-            resolve6(stats);
+            resolve7(stats);
           }
         });
       });
@@ -35740,7 +35740,7 @@ var require_readdir_glob = __commonJS({
             (skip) => new Minimatch(skip, { dot: true })
           );
         }
-        this.iterator = explore(resolve5(cwd || "."), this.options.follow, this.options.stat, this._shouldSkipDirectory.bind(this));
+        this.iterator = explore(resolve6(cwd || "."), this.options.follow, this.options.stat, this._shouldSkipDirectory.bind(this));
         this.paused = false;
         this.inactive = false;
         this.aborted = false;
@@ -35907,10 +35907,10 @@ var require_async = __commonJS({
           if (typeof args[arity - 1] === "function") {
             return asyncFn.apply(this, args);
           }
-          return new Promise((resolve5, reject2) => {
+          return new Promise((resolve6, reject2) => {
             args[arity - 1] = (err, ...cbArgs) => {
               if (err) return reject2(err);
-              resolve5(cbArgs.length > 1 ? cbArgs : cbArgs[0]);
+              resolve6(cbArgs.length > 1 ? cbArgs : cbArgs[0]);
             };
             asyncFn.apply(this, args);
           });
@@ -36156,13 +36156,13 @@ var require_async = __commonJS({
       var applyEachSeries = applyEach$1(mapSeries$1);
       const PROMISE_SYMBOL = Symbol("promiseCallback");
       function promiseCallback() {
-        let resolve5, reject2;
+        let resolve6, reject2;
         function callback(err, ...args) {
           if (err) return reject2(err);
-          resolve5(args.length > 1 ? args : args[0]);
+          resolve6(args.length > 1 ? args : args[0]);
         }
         callback[PROMISE_SYMBOL] = new Promise((res, rej) => {
-          resolve5 = res, reject2 = rej;
+          resolve6 = res, reject2 = rej;
         });
         return callback;
       }
@@ -36509,8 +36509,8 @@ var require_async = __commonJS({
             });
           }
           if (rejectOnError || !callback) {
-            return new Promise((resolve5, reject2) => {
-              res = resolve5;
+            return new Promise((resolve6, reject2) => {
+              res = resolve6;
               rej = reject2;
             });
           }
@@ -36549,10 +36549,10 @@ var require_async = __commonJS({
         }
         const eventMethod = (name) => (handler) => {
           if (!handler) {
-            return new Promise((resolve5, reject2) => {
+            return new Promise((resolve6, reject2) => {
               once2(name, (err, data) => {
                 if (err) return reject2(err);
-                resolve5(data);
+                resolve6(data);
               });
             });
           }
@@ -38570,7 +38570,7 @@ var require_BufferList2 = __commonJS({
         this.head = this.tail = null;
         this.length = 0;
       };
-      BufferList.prototype.join = function join9(s) {
+      BufferList.prototype.join = function join10(s) {
         if (this.length === 0) return "";
         var p = this.head;
         var ret2 = "" + p.data;
@@ -40634,7 +40634,7 @@ var require_BufferList3 = __commonJS({
         this.head = this.tail = null;
         this.length = 0;
       };
-      BufferList.prototype.join = function join9(s) {
+      BufferList.prototype.join = function join10(s) {
         if (this.length === 0) return "";
         var p = this.head;
         var ret2 = "" + p.data;
@@ -46460,11 +46460,11 @@ var require_core = __commonJS({
         this._finalize();
       }
       var self2 = this;
-      return new Promise(function(resolve5, reject) {
+      return new Promise(function(resolve6, reject) {
         var errored;
         self2._module.on("end", function() {
           if (!errored) {
-            resolve5();
+            resolve6();
           }
         });
         self2._module.on("error", function(err) {
@@ -50206,7 +50206,7 @@ var require_worksheet_writer = __commonJS({
       // =========================================================================
       // Worksheet Protection
       protect(password, options) {
-        return new Promise((resolve5) => {
+        return new Promise((resolve6) => {
           this.sheetProtection = {
             sheet: true
           };
@@ -50230,7 +50230,7 @@ var require_worksheet_writer = __commonJS({
               delete this.sheetProtection.spinCount;
             }
           }
-          resolve5();
+          resolve6();
         });
       }
       unprotect() {
@@ -50448,9 +50448,9 @@ var require_workbook_writer = __commonJS({
       _commitWorksheets() {
         const commitWorksheet = function(worksheet) {
           if (!worksheet.committed) {
-            return new Promise((resolve5) => {
+            return new Promise((resolve6) => {
               worksheet.stream.on("zipped", () => {
-                resolve5();
+                resolve6();
               });
               worksheet.commit();
             });
@@ -50538,19 +50538,19 @@ var require_workbook_writer = __commonJS({
         return void 0;
       }
       addStyles() {
-        return new Promise((resolve5) => {
+        return new Promise((resolve6) => {
           this.zip.append(this.styles.xml, { name: "xl/styles.xml" });
-          resolve5();
+          resolve6();
         });
       }
       addThemes() {
-        return new Promise((resolve5) => {
+        return new Promise((resolve6) => {
           this.zip.append(theme1Xml, { name: "xl/theme/theme1.xml" });
-          resolve5();
+          resolve6();
         });
       }
       addOfficeRels() {
-        return new Promise((resolve5) => {
+        return new Promise((resolve6) => {
           const xform = new RelationshipsXform();
           const xml = xform.toXml([
             { Id: "rId1", Type: RelType.OfficeDocument, Target: "xl/workbook.xml" },
@@ -50558,11 +50558,11 @@ var require_workbook_writer = __commonJS({
             { Id: "rId3", Type: RelType.ExtenderProperties, Target: "docProps/app.xml" }
           ]);
           this.zip.append(xml, { name: "/_rels/.rels" });
-          resolve5();
+          resolve6();
         });
       }
       addContentTypes() {
-        return new Promise((resolve5) => {
+        return new Promise((resolve6) => {
           const model = {
             worksheets: this._worksheets.filter(Boolean),
             sharedStrings: this.sharedStrings,
@@ -50572,7 +50572,7 @@ var require_workbook_writer = __commonJS({
           const xform = new ContentTypesXform();
           const xml = xform.toXml(model);
           this.zip.append(xml, { name: "[Content_Types].xml" });
-          resolve5();
+          resolve6();
         });
       }
       addMedia() {
@@ -50597,31 +50597,31 @@ var require_workbook_writer = __commonJS({
         );
       }
       addApp() {
-        return new Promise((resolve5) => {
+        return new Promise((resolve6) => {
           const model = {
             worksheets: this._worksheets.filter(Boolean)
           };
           const xform = new AppXform();
           const xml = xform.toXml(model);
           this.zip.append(xml, { name: "docProps/app.xml" });
-          resolve5();
+          resolve6();
         });
       }
       addCore() {
-        return new Promise((resolve5) => {
+        return new Promise((resolve6) => {
           const coreXform = new CoreXform();
           const xml = coreXform.toXml(this);
           this.zip.append(xml, { name: "docProps/core.xml" });
-          resolve5();
+          resolve6();
         });
       }
       addSharedStrings() {
         if (this.sharedStrings.count) {
-          return new Promise((resolve5) => {
+          return new Promise((resolve6) => {
             const sharedStringsXform = new SharedStringsXform();
             const xml = sharedStringsXform.toXml(this.sharedStrings);
             this.zip.append(xml, { name: "/xl/sharedStrings.xml" });
-            resolve5();
+            resolve6();
           });
         }
         return Promise.resolve();
@@ -50649,11 +50649,11 @@ var require_workbook_writer = __commonJS({
             });
           }
         });
-        return new Promise((resolve5) => {
+        return new Promise((resolve6) => {
           const xform = new RelationshipsXform();
           const xml = xform.toXml(relationships);
           this.zip.append(xml, { name: "/xl/_rels/workbook.xml.rels" });
-          resolve5();
+          resolve6();
         });
       }
       addWorkbook() {
@@ -50665,18 +50665,18 @@ var require_workbook_writer = __commonJS({
           properties: {},
           calcProperties: {}
         };
-        return new Promise((resolve5) => {
+        return new Promise((resolve6) => {
           const xform = new WorkbookXform();
           xform.prepare(model);
           zip.append(xform.toXml(model), { name: "/xl/workbook.xml" });
-          resolve5();
+          resolve6();
         });
       }
       _finalize() {
-        return new Promise((resolve5, reject) => {
+        return new Promise((resolve6, reject) => {
           this.stream.on("error", reject);
           this.stream.on("finish", () => {
-            resolve5(this);
+            resolve6(this);
           });
           this.zip.on("error", reject);
           this.zip.finalize();
@@ -58768,13 +58768,13 @@ var require_thenables = __commonJS({
         promise._captureStackTrace();
         if (context) context._popContext();
         var synchronous = true;
-        var result = util.tryCatch(then).call(x, resolve5, reject);
+        var result = util.tryCatch(then).call(x, resolve6, reject);
         synchronous = false;
         if (promise && result === errorObj2) {
           promise._rejectCallback(result.e, true, true);
           promise = null;
         }
-        function resolve5(value) {
+        function resolve6(value) {
           if (!promise) return;
           promise._resolveCallback(value);
           promise = null;
@@ -59309,9 +59309,9 @@ var require_debuggability = __commonJS({
         return false;
       }
       Promise2.prototype._fireEvent = defaultFireEvent;
-      Promise2.prototype._execute = function(executor, resolve5, reject) {
+      Promise2.prototype._execute = function(executor, resolve6, reject) {
         try {
-          executor(resolve5, reject);
+          executor(resolve6, reject);
         } catch (e) {
           return e;
         }
@@ -59334,10 +59334,10 @@ var require_debuggability = __commonJS({
         ;
         ;
       };
-      function cancellationExecute(executor, resolve5, reject) {
+      function cancellationExecute(executor, resolve6, reject) {
         var promise = this;
         try {
-          executor(resolve5, reject, function(onCancel) {
+          executor(resolve6, reject, function(onCancel) {
             if (typeof onCancel !== "function") {
               throw new TypeError("onCancel must be a function, got: " + util.toString(onCancel));
             }
@@ -63109,7 +63109,7 @@ var require_BufferList5 = __commonJS({
         this.head = this.tail = null;
         this.length = 0;
       };
-      BufferList.prototype.join = function join9(s) {
+      BufferList.prototype.join = function join10(s) {
         if (this.length === 0) return "";
         var p = this.head;
         var ret2 = "" + p.data;
@@ -64892,7 +64892,7 @@ var require_PullStream = __commonJS({
       };
       var rejectHandler;
       var pullStreamRejectHandler;
-      return new Promise2(function(resolve5, reject) {
+      return new Promise2(function(resolve6, reject) {
         rejectHandler = reject;
         pullStreamRejectHandler = function(e) {
           self2.__emittedError = e;
@@ -64902,7 +64902,7 @@ var require_PullStream = __commonJS({
           return reject(new Error("FILE_ENDED"));
         self2.once("error", pullStreamRejectHandler);
         self2.stream(eof, includeEof).on("error", reject).pipe(concatStream).on("finish", function() {
-          resolve5(buffer);
+          resolve6(buffer);
         }).on("error", reject);
       }).finally(function() {
         self2.removeListener("error", rejectHandler);
@@ -64945,10 +64945,10 @@ var require_BufferStream = __commonJS({
     if (!Stream.Writable || !Stream.Writable.prototype.destroy)
       Stream = require_readable5();
     module2.exports = function(entry) {
-      return new Promise2(function(resolve5, reject) {
+      return new Promise2(function(resolve6, reject) {
         var chunks = [];
         var bufferStream = Stream.Transform().on("finish", function() {
-          resolve5(Buffer2.concat(chunks));
+          resolve6(Buffer2.concat(chunks));
         }).on("error", reject);
         bufferStream._transform = function(d, e, cb) {
           chunks.push(d);
@@ -65087,8 +65087,8 @@ var require_parse = __commonJS({
             __autodraining = true;
             var draining = entry.pipe(NoopStream());
             draining.promise = function() {
-              return new Promise2(function(resolve5, reject) {
-                draining.on("finish", resolve5);
+              return new Promise2(function(resolve6, reject) {
+                draining.on("finish", resolve6);
                 draining.on("error", reject);
               });
             };
@@ -65143,11 +65143,11 @@ var require_parse = __commonJS({
               eof = Buffer2.alloc(4);
               eof.writeUInt32LE(134695760, 0);
             }
-            return new Promise2(function(resolve5, reject) {
+            return new Promise2(function(resolve6, reject) {
               self2.stream(eof).pipe(inflater).on("error", function(err) {
                 self2.emit("error", err);
               }).pipe(entry).on("finish", function() {
-                return fileSizeKnown ? self2._readRecord().then(resolve5).catch(reject) : self2._processDataDescriptor(entry).then(resolve5).catch(reject);
+                return fileSizeKnown ? self2._readRecord().then(resolve6).catch(reject) : self2._processDataDescriptor(entry).then(resolve6).catch(reject);
               });
             });
           });
@@ -65189,8 +65189,8 @@ var require_parse = __commonJS({
     };
     Parse.prototype.promise = function() {
       var self2 = this;
-      return new Promise2(function(resolve5, reject) {
-        self2.on("finish", resolve5);
+      return new Promise2(function(resolve6, reject) {
+        self2.on("finish", resolve6);
         self2.on("error", reject);
       });
     };
@@ -65318,7 +65318,7 @@ var require_BufferList6 = __commonJS({
         this.head = this.tail = null;
         this.length = 0;
       };
-      BufferList.prototype.join = function join9(s) {
+      BufferList.prototype.join = function join10(s) {
         if (this.length === 0) return "";
         var p = this.head;
         var ret2 = "" + p.data;
@@ -68299,7 +68299,7 @@ var require_dir_writer = __commonJS({
     module2.exports = DirWriter;
     var Writer = require_writer();
     var inherits2 = require_inherits();
-    var mkdir2 = require_mkdirp();
+    var mkdir3 = require_mkdirp();
     var path3 = require("path");
     var collect = require_collect();
     inherits2(DirWriter, Writer);
@@ -68315,7 +68315,7 @@ var require_dir_writer = __commonJS({
     }
     DirWriter.prototype._create = function() {
       var self2 = this;
-      mkdir2(self2._path, Writer.dirmode, function(er) {
+      mkdir3(self2._path, Writer.dirmode, function(er) {
         if (er) return self2.error(er);
         self2.ready = true;
         self2.emit("ready");
@@ -68660,7 +68660,7 @@ var require_writer = __commonJS({
     var fs = require_graceful_fs();
     var inherits2 = require_inherits();
     var rimraf = require_rimraf();
-    var mkdir2 = require_mkdirp();
+    var mkdir3 = require_mkdirp();
     var path3 = require("path");
     var umask = process.platform === "win32" ? 0 : process.umask();
     var getType = require_get_type();
@@ -68766,7 +68766,7 @@ var require_writer = __commonJS({
       }
     };
     function create(self2) {
-      mkdir2(path3.dirname(self2._path), Writer.dirmode, function(er, made) {
+      mkdir3(path3.dirname(self2._path), Writer.dirmode, function(er, made) {
         if (er) return self2.error(er);
         self2._madeDir = made;
         return self2._create();
@@ -68985,8 +68985,8 @@ var require_extract2 = __commonJS({
         extract.emit("close");
       });
       extract.promise = function() {
-        return new Promise2(function(resolve5, reject) {
-          extract.on("close", resolve5);
+        return new Promise2(function(resolve6, reject) {
+          extract.on("close", resolve6);
           extract.on("error", reject);
         });
       };
@@ -70493,8 +70493,8 @@ var require_directory = __commonJS({
                 return;
               }
               var writer = opts.getWriter ? opts.getWriter({ path: extractPath }) : Writer({ path: extractPath });
-              return new Promise2(function(resolve5, reject) {
-                entry.stream(opts.password).on("error", reject).pipe(writer).on("close", resolve5).on("error", reject);
+              return new Promise2(function(resolve6, reject) {
+                entry.stream(opts.password).on("error", reject).pipe(writer).on("close", resolve6).on("error", reject);
               });
             }, { concurrency: opts.concurrency > 1 ? opts.concurrency : 1 });
           });
@@ -70560,12 +70560,12 @@ var require_Open = __commonJS({
             return fs.createReadStream(filename, { start: offset, end: length && offset + length });
           },
           size: function() {
-            return new Promise2(function(resolve5, reject) {
+            return new Promise2(function(resolve6, reject) {
               fs.stat(filename, function(err, d) {
                 if (err)
                   reject(err);
                 else
-                  resolve5(d.size);
+                  resolve6(d.size);
               });
             });
           }
@@ -70586,14 +70586,14 @@ var require_Open = __commonJS({
             return request(options2);
           },
           size: function() {
-            return new Promise2(function(resolve5, reject) {
+            return new Promise2(function(resolve6, reject) {
               var req = request(params);
               req.on("response", function(d) {
                 req.abort();
                 if (!d.headers["content-length"])
                   reject(new Error("Missing content length header"));
                 else
-                  resolve5(d.headers["content-length"]);
+                  resolve6(d.headers["content-length"]);
               }).on("error", reject);
             });
           }
@@ -70603,12 +70603,12 @@ var require_Open = __commonJS({
       s3: function(client, params, options) {
         var source = {
           size: function() {
-            return new Promise2(function(resolve5, reject) {
+            return new Promise2(function(resolve6, reject) {
               client.headObject(params, function(err, d) {
                 if (err)
                   reject(err);
                 else
-                  resolve5(d.ContentLength);
+                  resolve6(d.ContentLength);
               });
             });
           },
@@ -71024,7 +71024,7 @@ var require_iterate_stream = __commonJS({
       const contents = [];
       stream.on("data", (data) => contents.push(data));
       let resolveStreamEndedPromise;
-      const streamEndedPromise = new Promise((resolve5) => resolveStreamEndedPromise = resolve5);
+      const streamEndedPromise = new Promise((resolve6) => resolveStreamEndedPromise = resolve6);
       let ended = false;
       stream.on("end", () => {
         ended = true;
@@ -71049,13 +71049,13 @@ var require_iterate_stream = __commonJS({
       resolveStreamEndedPromise();
     };
     function once(eventEmitter, type) {
-      return new Promise((resolve5) => {
+      return new Promise((resolve6) => {
         let fired = false;
         const handler = () => {
           if (!fired) {
             fired = true;
             eventEmitter.removeListener(type, handler);
-            resolve5();
+            resolve6();
           }
         };
         eventEmitter.addListener(type, handler);
@@ -71579,7 +71579,7 @@ var require_workbook_reader = __commonJS({
                 if (this.sharedStrings && this.workbookRels) {
                   yield* this._parseWorksheet(iterateStream(entry), sheetNo);
                 } else {
-                  await new Promise((resolve5, reject) => {
+                  await new Promise((resolve6, reject) => {
                     tmp.file((err, path3, fd, tempFileCleanupCallback) => {
                       if (err) {
                         return reject(err);
@@ -71589,7 +71589,7 @@ var require_workbook_reader = __commonJS({
                       tempStream.on("error", reject);
                       entry.pipe(tempStream);
                       return tempStream.on("finish", () => {
-                        return resolve5();
+                        return resolve6();
                       });
                     });
                   });
@@ -195530,7 +195530,7 @@ ${lanes.join("\n")}
           }
         }
         function createImportCallExpressionAMD(arg, containsLexicalThis) {
-          const resolve5 = factory2.createUniqueName("resolve");
+          const resolve6 = factory2.createUniqueName("resolve");
           const reject = factory2.createUniqueName("reject");
           const parameters = [
             factory2.createParameterDeclaration(
@@ -195539,7 +195539,7 @@ ${lanes.join("\n")}
               /*dotDotDotToken*/
               void 0,
               /*name*/
-              resolve5
+              resolve6
             ),
             factory2.createParameterDeclaration(
               /*modifiers*/
@@ -195556,7 +195556,7 @@ ${lanes.join("\n")}
                 factory2.createIdentifier("require"),
                 /*typeArguments*/
                 void 0,
-                [factory2.createArrayLiteralExpression([arg || factory2.createOmittedExpression()]), resolve5, reject]
+                [factory2.createArrayLiteralExpression([arg || factory2.createOmittedExpression()]), resolve6, reject]
               )
             )
           ]);
@@ -282274,8 +282274,8 @@ Additional information: BADCLIENT: Bad error code, ${badCode} not found in range
         installPackage(options) {
           this.packageInstallId++;
           const request = { kind: "installPackage", ...options, id: this.packageInstallId };
-          const promise = new Promise((resolve5, reject) => {
-            (this.packageInstalledPromise ?? (this.packageInstalledPromise = /* @__PURE__ */ new Map())).set(this.packageInstallId, { resolve: resolve5, reject });
+          const promise = new Promise((resolve6, reject) => {
+            (this.packageInstalledPromise ?? (this.packageInstalledPromise = /* @__PURE__ */ new Map())).set(this.packageInstallId, { resolve: resolve6, reject });
           });
           this.installer.send(request);
           return promise;
@@ -282566,8 +282566,8 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var vscode = __toESM(require("vscode"));
 var import_node_crypto4 = require("node:crypto");
-var import_node_fs10 = require("node:fs");
-var import_node_path12 = require("node:path");
+var import_node_fs11 = require("node:fs");
+var import_node_path13 = require("node:path");
 
 // apps/vscode-extension/src/copilot-bridge.ts
 init_src();
@@ -282694,8 +282694,8 @@ init_src2();
 
 // packages/cli/src/runner.ts
 var import_node_crypto3 = require("node:crypto");
-var import_node_fs8 = require("node:fs");
-var import_node_path10 = require("node:path");
+var import_node_fs9 = require("node:fs");
+var import_node_path11 = require("node:path");
 
 // packages/adapters/src/abstract-adapter.ts
 function normaliseAction(raw) {
@@ -286173,7 +286173,7 @@ function formatError(args, out) {
   return `Playwright CLI "${shown}" failed (exit ${out.exitCode}): ${detail || "no diagnostic output"}`;
 }
 function runChild(command, args, opts) {
-  return new Promise((resolve5, reject) => {
+  return new Promise((resolve6, reject) => {
     const child = (0, import_node_child_process2.spawn)(command, args, {
       cwd: opts.cwd,
       env: { ...process.env, ...opts.env ?? {} },
@@ -286214,7 +286214,7 @@ function runChild(command, args, opts) {
       settled = true;
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", onAbort);
-      resolve5({
+      resolve6({
         ok: code === 0,
         stdout,
         stderr,
@@ -286226,8 +286226,12 @@ function runChild(command, args, opts) {
 
 // packages/browser-tools/src/playwright-mcp-adapter.ts
 var import_node_child_process3 = require("node:child_process");
+var import_node_fs7 = require("node:fs");
+var import_promises = require("node:fs/promises");
+var import_node_path9 = require("node:path");
 var DEFAULT_TIMEOUT_MS2 = 75e3;
-var INIT_TIMEOUT_MS = 3e4;
+var INIT_TIMEOUT_MS = 45e3;
+var mcpPackageInstallJobs = /* @__PURE__ */ new Map();
 var MAX_STDOUT_BYTES = 256 * 1024;
 var PlaywrightMcpAdapter = class {
   opts;
@@ -286500,15 +286504,16 @@ var PlaywrightMcpAdapter = class {
   }
   request(method, params, timeoutMs) {
     const id = this.nextId++;
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`MCP request "${method}" timed out after ${timeoutMs ?? DEFAULT_TIMEOUT_MS2}ms`));
+        const stderr = this.stderrBuf.trim().slice(-900);
+        reject(new Error(`MCP request "${method}" timed out after ${timeoutMs ?? DEFAULT_TIMEOUT_MS2}ms${stderr ? `; server stderr: ${stderr}` : ""}`));
       }, timeoutMs ?? DEFAULT_TIMEOUT_MS2);
       this.pending.set(id, {
         resolve: (m) => {
           clearTimeout(timer);
-          resolve5(m);
+          resolve6(m);
         },
         reject: (e) => {
           clearTimeout(timer);
@@ -286518,19 +286523,24 @@ var PlaywrightMcpAdapter = class {
       this.proc?.stdin?.write(this.frame({ jsonrpc: "2.0", id, method, params }));
     });
   }
-  spawnIfAbsent() {
+  async spawnIfAbsent() {
     if (this.proc) return Promise.resolve();
     if (!this.opts.command) {
-      return Promise.reject(new Error("MCP command not configured"));
+      throw new Error("MCP command not configured");
     }
-    const command = this.opts.command;
-    return new Promise((resolve5, reject) => {
-      const args = [
-        ...this.opts.serverArgs ?? ["mcp"],
-        ...this.opts.extraServerArgs ?? [],
-        ...this.opts.browser ? ["--browser", this.opts.browser] : [],
-        ...this.opts.allowedHosts?.length ? ["--allowed-hosts", this.opts.allowedHosts.join(",")] : []
-      ];
+    let command = this.opts.command;
+    let args = [
+      ...this.opts.serverArgs ?? ["mcp"],
+      ...this.opts.extraServerArgs ?? [],
+      ...this.opts.browser ? ["--browser", this.opts.browser] : [],
+      ...this.opts.allowedHosts?.length ? ["--allowed-hosts", this.opts.allowedHosts.join(",")] : []
+    ];
+    if (this.opts.runtimeDirectory) {
+      const mcpCli = await ensurePlaywrightMcpCli(this.opts.runtimeDirectory);
+      command = findNodeExecutable();
+      args = [mcpCli, ...this.opts.extraServerArgs ?? [], ...this.opts.browser ? ["--browser", this.opts.browser] : [], ...this.opts.allowedHosts?.length ? ["--allowed-hosts", this.opts.allowedHosts.join(",")] : []];
+    }
+    await new Promise((resolveSpawn, rejectSpawn) => {
       const attachesToExistingBrowser = args.some(
         (arg) => arg.startsWith("--cdp-endpoint") || arg === "--extension" || arg.startsWith("--extension=")
       ) || Boolean(this.opts.env?.PLAYWRIGHT_MCP_CDP_ENDPOINT);
@@ -286544,6 +286554,7 @@ var PlaywrightMcpAdapter = class {
       });
       this.proc = child;
       this.stderrBuf = "";
+      child.once("spawn", () => resolveSpawn());
       child.on("error", (err) => {
         const message = spawnErrorMessage(err, command);
         if (this.proc === child) {
@@ -286553,7 +286564,7 @@ var PlaywrightMcpAdapter = class {
           this.initialized = false;
           this.toolSchemas.clear();
         }
-        if (!this.initialized) reject(new Error(message));
+        if (!this.initialized) rejectSpawn(new Error(message));
       });
       child.on("close", () => {
         if (this.proc === child) {
@@ -286582,7 +286593,6 @@ var PlaywrightMcpAdapter = class {
       child.stderr.on("data", (chunk) => {
         if (this.stderrBuf.length < MAX_STDOUT_BYTES) this.stderrBuf += chunk.toString("utf-8");
       });
-      resolve5();
     });
   }
   dispatch(body) {
@@ -286614,6 +286624,74 @@ var PlaywrightMcpAdapter = class {
     if (child && !child.killed) child.kill("SIGTERM");
   }
 };
+async function ensurePlaywrightMcpCli(runtimeDirectory) {
+  const root = (0, import_node_path9.resolve)(runtimeDirectory);
+  const cliPath = (0, import_node_path9.join)(root, "node_modules", "@playwright", "mcp", "cli.js");
+  if ((0, import_node_fs7.existsSync)(cliPath)) return cliPath;
+  const key = process.platform === "win32" ? root.toLowerCase() : root;
+  const existing = mcpPackageInstallJobs.get(key);
+  if (existing) return existing;
+  const installation = installPlaywrightMcp(root, cliPath);
+  mcpPackageInstallJobs.set(key, installation);
+  try {
+    return await installation;
+  } finally {
+    if (mcpPackageInstallJobs.get(key) === installation) mcpPackageInstallJobs.delete(key);
+  }
+}
+async function installPlaywrightMcp(runtimeDirectory, cliPath) {
+  await (0, import_promises.mkdir)(runtimeDirectory, { recursive: true });
+  const node = findNodeExecutable();
+  const args = ["install", "--prefix", runtimeDirectory, "--no-save", "--no-audit", "--no-fund", "--loglevel=error", "@playwright/mcp@latest"];
+  let command = node;
+  let installArgs = args;
+  if (process.platform === "win32") {
+    const npmCli = (0, import_node_path9.join)((0, import_node_path9.dirname)(node), "node_modules", "npm", "bin", "npm-cli.js");
+    if (!(0, import_node_fs7.existsSync)(npmCli)) {
+      throw new Error(`Could not find npm's JavaScript launcher beside Node at ${(0, import_node_path9.dirname)(node)}; cannot prepare the Playwright MCP fallback.`);
+    }
+    installArgs = [npmCli, ...args];
+  } else {
+    command = "npm";
+  }
+  await new Promise((resolveInstall, rejectInstall) => {
+    const child = (0, import_node_child_process3.spawn)(command, installArgs, {
+      cwd: runtimeDirectory,
+      env: { ...process.env, npm_config_yes: "true" },
+      stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => {
+      if (stderr.length < 2e3) stderr += chunk.toString("utf8");
+    });
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      rejectInstall(new Error("Timed out after 180 seconds installing the Playwright MCP fallback package."));
+    }, 18e4);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      rejectInstall(new Error(`Could not install the Playwright MCP fallback package: ${error.message}`));
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolveInstall();
+      else rejectInstall(new Error(`Installing the Playwright MCP fallback package exited with code ${String(code)}.${stderr.trim() ? ` npm detail: ${stderr.trim().slice(-1200)}` : ""}`));
+    });
+  });
+  if (!(0, import_node_fs7.existsSync)(cliPath)) {
+    throw new Error(`Playwright MCP installation completed but its CLI was not found at ${cliPath}.`);
+  }
+  return cliPath;
+}
+function findNodeExecutable() {
+  if (process.platform !== "win32") return process.execPath;
+  const pathValue = process.env.PATH ?? process.env.Path ?? "";
+  const nodeOnPath = pathValue.split(import_node_path9.delimiter).map((directory) => (0, import_node_path9.join)(directory.replace(/^"|"$/g, ""), "node.exe")).find((candidate) => (0, import_node_fs7.existsSync)(candidate));
+  if (nodeOnPath) return nodeOnPath;
+  if (/\\node\.exe$/i.test(process.execPath)) return process.execPath;
+  throw new Error("Could not find node.exe on PATH to launch Playwright MCP directly on Windows.");
+}
 
 // packages/browser-tools/src/browser-orchestrator.ts
 var BrowserSession = class {
@@ -286842,9 +286920,9 @@ function createBrowserSession(options) {
 
 // packages/browser-tools/src/isolated-cdp-browser.ts
 var import_node_child_process4 = require("node:child_process");
-var import_node_fs7 = require("node:fs");
-var import_promises = require("node:fs/promises");
-var import_node_path9 = require("node:path");
+var import_node_fs8 = require("node:fs");
+var import_promises2 = require("node:fs/promises");
+var import_node_path10 = require("node:path");
 var IsolatedCdpBrowser = class _IsolatedCdpBrowser {
   constructor(endpoint, profileDirectory, child) {
     this.endpoint = endpoint;
@@ -286856,8 +286934,8 @@ var IsolatedCdpBrowser = class _IsolatedCdpBrowser {
     if (!executable) {
       throw new Error("TestPilot could not find Google Chrome or Microsoft Edge to create a shared isolated browser session.");
     }
-    await (0, import_promises.mkdir)(profileRoot, { recursive: true });
-    const profileDirectory = await (0, import_promises.mkdtemp)((0, import_node_path9.join)(profileRoot, "tcoe-cdp-"));
+    await (0, import_promises2.mkdir)(profileRoot, { recursive: true });
+    const profileDirectory = await (0, import_promises2.mkdtemp)((0, import_node_path10.join)(profileRoot, "tcoe-cdp-"));
     const child = (0, import_node_child_process4.spawn)(executable, [
       "--remote-debugging-port=0",
       `--user-data-dir=${profileDirectory}`,
@@ -286871,61 +286949,61 @@ var IsolatedCdpBrowser = class _IsolatedCdpBrowser {
     child.once("error", (error) => {
       spawnError = error;
     });
-    const activePortPath = (0, import_node_path9.join)(profileDirectory, "DevToolsActivePort");
+    const activePortPath = (0, import_node_path10.join)(profileDirectory, "DevToolsActivePort");
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (spawnError) {
         await stopOwnedBrowser(child);
-        await (0, import_promises.rm)(profileDirectory, { recursive: true, force: true });
+        await (0, import_promises2.rm)(profileDirectory, { recursive: true, force: true });
         throw new Error(`Could not start the isolated browser: ${spawnError.message}`);
       }
       if (child.exitCode !== null) {
-        await (0, import_promises.rm)(profileDirectory, { recursive: true, force: true });
+        await (0, import_promises2.rm)(profileDirectory, { recursive: true, force: true });
         throw new Error(`The isolated browser exited during startup (code ${child.exitCode}).`);
       }
       try {
-        const [portLine] = (await (0, import_promises.readFile)(activePortPath, "utf8")).split(/\r?\n/);
+        const [portLine] = (await (0, import_promises2.readFile)(activePortPath, "utf8")).split(/\r?\n/);
         const port = Number(portLine);
         if (Number.isInteger(port) && port > 0 && port < 65536) {
           return new _IsolatedCdpBrowser(`http://127.0.0.1:${port}`, profileDirectory, child);
         }
       } catch {
       }
-      await new Promise((resolve5) => setTimeout(resolve5, 100));
+      await new Promise((resolve6) => setTimeout(resolve6, 100));
     }
     await stopOwnedBrowser(child);
-    await (0, import_promises.rm)(profileDirectory, { recursive: true, force: true });
+    await (0, import_promises2.rm)(profileDirectory, { recursive: true, force: true });
     throw new Error("Timed out waiting for the isolated browser to expose its local DevTools connection.");
   }
   async close() {
     await stopOwnedBrowser(this.child);
-    await (0, import_promises.rm)(this.profileDirectory, { recursive: true, force: true });
+    await (0, import_promises2.rm)(this.profileDirectory, { recursive: true, force: true });
   }
 };
 function findChromiumExecutable() {
   const env2 = process.env;
   const candidates = process.platform === "win32" ? [
-    env2["ProgramFiles"] && (0, import_node_path9.join)(env2["ProgramFiles"], "Google", "Chrome", "Application", "chrome.exe"),
-    env2["ProgramFiles(x86)"] && (0, import_node_path9.join)(env2["ProgramFiles(x86)"], "Google", "Chrome", "Application", "chrome.exe"),
-    env2["LOCALAPPDATA"] && (0, import_node_path9.join)(env2["LOCALAPPDATA"], "Google", "Chrome", "Application", "chrome.exe"),
-    env2["ProgramFiles"] && (0, import_node_path9.join)(env2["ProgramFiles"], "Microsoft", "Edge", "Application", "msedge.exe"),
-    env2["ProgramFiles(x86)"] && (0, import_node_path9.join)(env2["ProgramFiles(x86)"], "Microsoft", "Edge", "Application", "msedge.exe"),
-    env2["LOCALAPPDATA"] && (0, import_node_path9.join)(env2["LOCALAPPDATA"], "Microsoft", "Edge", "Application", "msedge.exe")
+    env2["ProgramFiles"] && (0, import_node_path10.join)(env2["ProgramFiles"], "Google", "Chrome", "Application", "chrome.exe"),
+    env2["ProgramFiles(x86)"] && (0, import_node_path10.join)(env2["ProgramFiles(x86)"], "Google", "Chrome", "Application", "chrome.exe"),
+    env2["LOCALAPPDATA"] && (0, import_node_path10.join)(env2["LOCALAPPDATA"], "Google", "Chrome", "Application", "chrome.exe"),
+    env2["ProgramFiles"] && (0, import_node_path10.join)(env2["ProgramFiles"], "Microsoft", "Edge", "Application", "msedge.exe"),
+    env2["ProgramFiles(x86)"] && (0, import_node_path10.join)(env2["ProgramFiles(x86)"], "Microsoft", "Edge", "Application", "msedge.exe"),
+    env2["LOCALAPPDATA"] && (0, import_node_path10.join)(env2["LOCALAPPDATA"], "Microsoft", "Edge", "Application", "msedge.exe")
   ] : process.platform === "darwin" ? [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
   ] : [
     ...["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"]
-  ].flatMap((name) => (env2["PATH"] ?? "").split(import_node_path9.delimiter).map((directory) => (0, import_node_path9.join)(directory, name)));
-  return candidates.find((candidate) => Boolean(candidate && (0, import_node_fs7.existsSync)(candidate)));
+  ].flatMap((name) => (env2["PATH"] ?? "").split(import_node_path10.delimiter).map((directory) => (0, import_node_path10.join)(directory, name)));
+  return candidates.find((candidate) => Boolean(candidate && (0, import_node_fs8.existsSync)(candidate)));
 }
 async function stopOwnedBrowser(child) {
   if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
   if (process.platform === "win32") {
-    await new Promise((resolve5) => {
+    await new Promise((resolve6) => {
       const killer = (0, import_node_child_process4.spawn)("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-      killer.once("error", () => resolve5());
-      killer.once("exit", () => resolve5());
+      killer.once("error", () => resolve6());
+      killer.once("exit", () => resolve6());
     });
   } else {
     try {
@@ -286938,8 +287016,8 @@ async function stopOwnedBrowser(child) {
     }
   }
   await Promise.race([
-    new Promise((resolve5) => child.once("exit", () => resolve5())),
-    new Promise((resolve5) => setTimeout(resolve5, 2e3))
+    new Promise((resolve6) => child.once("exit", () => resolve6())),
+    new Promise((resolve6) => setTimeout(resolve6, 2e3))
   ]);
   if (child.exitCode === null && child.signalCode === null) {
     try {
@@ -287059,7 +287137,7 @@ async function runAgent(options) {
   const analysis = analyzeFramework({
     repositoryRoot: options.repositoryRoot,
     testCase,
-    indexDir: options.readOnly ? void 0 : (0, import_node_path10.join)(options.stateDir, "index"),
+    indexDir: options.readOnly ? void 0 : (0, import_node_path11.join)(options.stateDir, "index"),
     persistIndex: !options.readOnly
   });
   task.repositorySnapshot = snapshotRepository(
@@ -287396,7 +287474,7 @@ async function gatherEvidenceForTestCase(browser, options) {
             }
           }
           polls++;
-          await new Promise((resolve5) => setTimeout(resolve5, 1e3));
+          await new Promise((resolve6) => setTimeout(resolve6, 1e3));
         }
         if (!matched) {
           if (!mfaNoticeSent && !options.fallbackRetry && browser.activateFallback(`Playwright CLI exposed no matching control for explicit wait target "${targetDescription ?? ""}"`)) {
@@ -287516,7 +287594,7 @@ async function gatherEvidenceForTestCase(browser, options) {
         if (compatibleTargets.length === 0) {
           for (let retry = 0; retry < 6 && compatibleTargets.length === 0; retry++) {
             if (options.signal?.aborted) throw new Error("Browser step replay was cancelled.");
-            await new Promise((resolve5) => setTimeout(resolve5, 400));
+            await new Promise((resolve6) => setTimeout(resolve6, 400));
             const refreshed = await browser.capture(void 0, { signal: options.signal });
             if (!refreshed) continue;
             snapshot = refreshed;
@@ -287585,7 +287663,7 @@ async function gatherEvidenceForTestCase(browser, options) {
           if (!activated.ok) {
             result = activated;
           } else {
-            await new Promise((resolve5) => setTimeout(resolve5, 250));
+            await new Promise((resolve6) => setTimeout(resolve6, 250));
             const refreshedSnapshot = await browser.capture(void 0, { signal: options.signal });
             const activatedDom = await inspectVisibleDomTargets(browser, action.target, options.signal);
             const editor = activatedDom.find(
@@ -287728,7 +287806,9 @@ async function gatherEvidenceForTestCase(browser, options) {
     let observed;
     for (let attempt = 0; attempt < 3 && !observed; attempt++) {
       observed = await browser.capture(void 0, { signal: options.signal, timeoutMs: 2e4 });
-      if (!observed && attempt < 2) await new Promise((resolve5) => setTimeout(resolve5, 750));
+      const startupHandshakeFailed = /MCP request ["'](?:initialize|tools\/list)["'] timed out/i.test(browser.lastBackendFailure ?? "");
+      if (!observed && attempt < 2 && !startupHandshakeFailed) await new Promise((resolve6) => setTimeout(resolve6, 750));
+      if (startupHandshakeFailed) break;
     }
     if (!observed && nextStepAction) {
       const nextAction = parseReplayAction(nextStepAction);
@@ -288659,18 +288739,18 @@ async function generateChangesFromProvider(options) {
   ])].filter((path3) => /^pages\//i.test(path3.replace(/\\/g, "/"))).slice(0, 6);
   const existingPageSources = existingScreenPaths.flatMap((sourcePath) => {
     const normalizedPath = sourcePath.replace(/\\/g, "/");
-    const locatorAbsolute = (0, import_node_path10.join)(options.repositoryRoot, normalizedPath);
-    if (!(0, import_node_fs8.existsSync)(locatorAbsolute)) return [];
+    const locatorAbsolute = (0, import_node_path11.join)(options.repositoryRoot, normalizedPath);
+    if (!(0, import_node_fs9.existsSync)(locatorAbsolute)) return [];
     const pagePath = normalizedPath.replace(/\.locators\.tsx?$/i, ".page.ts");
-    const pageAbsolute = (0, import_node_path10.join)(options.repositoryRoot, pagePath);
+    const pageAbsolute = (0, import_node_path11.join)(options.repositoryRoot, pagePath);
     return [
-      ...(0, import_node_fs8.existsSync)(pageAbsolute) ? [`EXISTING SCREEN PAGE ${pagePath}
+      ...(0, import_node_fs9.existsSync)(pageAbsolute) ? [`EXISTING SCREEN PAGE ${pagePath}
 \`\`\`typescript
-${(0, import_node_fs8.readFileSync)(pageAbsolute, "utf-8").slice(0, 5e3)}
+${(0, import_node_fs9.readFileSync)(pageAbsolute, "utf-8").slice(0, 5e3)}
 \`\`\``] : [],
       `EXISTING SCREEN LOCATORS ${normalizedPath}
 \`\`\`typescript
-${(0, import_node_fs8.readFileSync)(locatorAbsolute, "utf-8").slice(0, 5e3)}
+${(0, import_node_fs9.readFileSync)(locatorAbsolute, "utf-8").slice(0, 5e3)}
 \`\`\``
     ];
   });
@@ -289011,7 +289091,7 @@ function findScreenPageArchitectureIssues(changes, cases, repositoryRoot) {
     }
     if (pageFolder) generatedPageFolders.add(pageFolder);
     const generatedPage = changes.find((change) => change.path === pagePath);
-    const source = generatedPage?.newContent ?? ((0, import_node_fs8.existsSync)((0, import_node_path10.join)(repositoryRoot, pagePath)) ? (0, import_node_fs8.readFileSync)((0, import_node_path10.join)(repositoryRoot, pagePath), "utf-8") : "");
+    const source = generatedPage?.newContent ?? ((0, import_node_fs9.existsSync)((0, import_node_path11.join)(repositoryRoot, pagePath)) ? (0, import_node_fs9.readFileSync)((0, import_node_path11.join)(repositoryRoot, pagePath), "utf-8") : "");
     if (!source || !new RegExp(`export\\s+class\\s+${className}\\s+extends\\s+BasePage\\b`).test(source)) {
       issues.push(`The imported page class ${className} must be exported from '${pagePath}' and extend BasePage.`);
       continue;
@@ -289022,8 +289102,8 @@ function findScreenPageArchitectureIssues(changes, cases, repositoryRoot) {
     }
     const locatorPath = pagePath.replace(/\.page\.tsx?$/i, ".locators.ts");
     const locator = changes.find((change) => change.path === locatorPath);
-    const locatorSource = locator?.newContent ?? ((0, import_node_fs8.existsSync)((0, import_node_path10.join)(repositoryRoot, locatorPath)) ? (0, import_node_fs8.readFileSync)((0, import_node_path10.join)(repositoryRoot, locatorPath), "utf-8") : "");
-    const locatorModule = (0, import_node_path10.basename)(locatorPath).replace(/\.ts$/i, "");
+    const locatorSource = locator?.newContent ?? ((0, import_node_fs9.existsSync)((0, import_node_path11.join)(repositoryRoot, locatorPath)) ? (0, import_node_fs9.readFileSync)((0, import_node_path11.join)(repositoryRoot, locatorPath), "utf-8") : "");
+    const locatorModule = (0, import_node_path11.basename)(locatorPath).replace(/\.ts$/i, "");
     const locatorImportPattern = new RegExp(`from\\s+['"]\\./${escapeRegExp(locatorModule)}(?:\\.tsx?)?['"]`);
     if (!locatorSource || !/export\s+class\s+\w+Locators\b/.test(locatorSource) || !locatorImportPattern.test(source)) {
       issues.push(`${pagePath} must have a paired locator class in '${locatorPath}' and import that class.`);
@@ -289073,15 +289153,15 @@ function casesShareFlow(cases, dataCases) {
   );
 }
 function readExistingJson(repositoryRoot, relativePath) {
-  const path3 = (0, import_node_path10.join)(repositoryRoot, relativePath);
-  if (!(0, import_node_fs8.existsSync)(path3)) return void 0;
-  return (0, import_node_fs8.readFileSync)(path3, "utf-8").slice(0, 12e3);
+  const path3 = (0, import_node_path11.join)(repositoryRoot, relativePath);
+  if (!(0, import_node_fs9.existsSync)(path3)) return void 0;
+  return (0, import_node_fs9.readFileSync)(path3, "utf-8").slice(0, 12e3);
 }
 function supportsJsonModuleImports(repositoryRoot) {
-  const tsconfigPath = (0, import_node_path10.join)(repositoryRoot, "tsconfig.json");
-  if (!(0, import_node_fs8.existsSync)(tsconfigPath)) return false;
+  const tsconfigPath = (0, import_node_path11.join)(repositoryRoot, "tsconfig.json");
+  if (!(0, import_node_fs9.existsSync)(tsconfigPath)) return false;
   try {
-    const source = (0, import_node_fs8.readFileSync)(tsconfigPath, "utf-8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g, "");
+    const source = (0, import_node_fs9.readFileSync)(tsconfigPath, "utf-8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g, "");
     return /"resolveJsonModule"\s*:\s*true\b/.test(source);
   } catch {
     return false;
@@ -289121,7 +289201,7 @@ function applyDirectJsonDataFallback(changes, data) {
       }
       source = source.slice(0, start) + block + source.slice(end);
     }
-    const importPath = (0, import_node_path10.relative)((0, import_node_path10.dirname)(change.path), data.targetPath).replace(/\\/g, "/");
+    const importPath = (0, import_node_path11.relative)((0, import_node_path11.dirname)(change.path), data.targetPath).replace(/\\/g, "/");
     const specifier = importPath.startsWith(".") ? importPath : `./${importPath}`;
     const importLine = `import ${jsonImportName} from '${specifier}'
 `;
@@ -289199,7 +289279,7 @@ function manualDataUsageIssues(changes, data, expectedDataLoaderImportPath, acce
     }
     if (accessMode === "data-loader" && !modulePattern.test(source)) issues.push(`${spec.path} must load the shared '${data.moduleName}' module through DataLoader.`);
     if (accessMode === "direct-json") {
-      const expectedPath = (0, import_node_path10.relative)((0, import_node_path10.dirname)(spec.path), data.targetPath).replace(/\\/g, "/");
+      const expectedPath = (0, import_node_path11.relative)((0, import_node_path11.dirname)(spec.path), data.targetPath).replace(/\\/g, "/");
       const expectedSpecifier = expectedPath.startsWith(".") ? expectedPath : `./${expectedPath}`;
       if (jsonImport?.[1] !== expectedSpecifier) issues.push(`${spec.path} must import the generated '${data.targetPath}' JSON directly using its relative path.`);
       if (dataLoaderImport || /DataLoader\s*\.\s*get\s*\(/.test(source)) issues.push(`${spec.path} must use the direct JSON import consistently after the DataLoader fallback.`);
@@ -289464,11 +289544,11 @@ function findAssertionLocatorIssues(changes, testCases, candidates) {
   return [...new Set(issues)];
 }
 function buildManualDataChanges(repositoryRoot, dataPath, data) {
-  const absoluteDataPath = (0, import_node_path10.join)(repositoryRoot, dataPath);
+  const absoluteDataPath = (0, import_node_path11.join)(repositoryRoot, dataPath);
   let allRows = {};
-  if ((0, import_node_fs8.existsSync)(absoluteDataPath)) {
+  if ((0, import_node_fs9.existsSync)(absoluteDataPath)) {
     try {
-      const parsed = JSON.parse((0, import_node_fs8.readFileSync)(absoluteDataPath, "utf-8"));
+      const parsed = JSON.parse((0, import_node_fs9.readFileSync)(absoluteDataPath, "utf-8"));
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("expected an object");
       allRows = parsed;
     } catch (error) {
@@ -289478,15 +289558,15 @@ function buildManualDataChanges(repositoryRoot, dataPath, data) {
   for (const testCase of data.cases) allRows[testCase.caseKey] = testCase.values;
   const changes = [{
     path: dataPath,
-    kind: (0, import_node_fs8.existsSync)(absoluteDataPath) ? "modify" : "create",
+    kind: (0, import_node_fs9.existsSync)(absoluteDataPath) ? "modify" : "create",
     newContent: `${JSON.stringify(allRows, null, 2)}
 `,
     reason: `Added ${data.cases.length} non-secret case row(s) to the shared '${data.moduleName}' scenario module.`,
     evidence: ["Values were extracted from quoted fill/enter/type actions in the normalized manual test case."]
   }];
-  const typePath = (0, import_node_path10.join)(repositoryRoot, "src/utils/testData/dataTypes.ts");
-  if (!(0, import_node_fs8.existsSync)(typePath)) return changes;
-  const typeSource = (0, import_node_fs8.readFileSync)(typePath, "utf-8");
+  const typePath = (0, import_node_path11.join)(repositoryRoot, "src/utils/testData/dataTypes.ts");
+  if (!(0, import_node_fs9.existsSync)(typePath)) return changes;
+  const typeSource = (0, import_node_fs9.readFileSync)(typePath, "utf-8");
   const registry = typeSource.match(/(export\s+interface\s+DataRegistry\s*\{)([\s\S]*?)(\n\s*\})/);
   if (!registry || new RegExp(`^\\s*${data.moduleName}\\s*:`, "m").test(registry[2])) return changes;
   const desiredEntry = `
@@ -289506,7 +289586,7 @@ function renderFrameworkExamples(analysis) {
   const files = analysis.analysis.indexedFiles;
   const read = (file) => {
     try {
-      return (0, import_node_fs8.readFileSync)(file.absolutePath, "utf-8");
+      return (0, import_node_fs9.readFileSync)(file.absolutePath, "utf-8");
     } catch {
       return "";
     }
@@ -289735,17 +289815,17 @@ async function generateRepairChanges(options) {
   }
   for (const path3 of options.task.appliedChanges) {
     const resolved = new Workspace(options.repositoryRoot).tryResolve(path3);
-    if (!resolved || !(0, import_node_fs8.existsSync)(resolved.resolved)) throw new Error(`Applied source file is missing or outside the repository: ${path3}`);
+    if (!resolved || !(0, import_node_fs9.existsSync)(resolved.resolved)) throw new Error(`Applied source file is missing or outside the repository: ${path3}`);
     const expected = options.task.appliedFileFingerprints?.[resolved.relative];
-    if (!expected || fingerprint((0, import_node_fs8.readFileSync)(resolved.resolved, "utf-8")) !== expected) {
+    if (!expected || fingerprint((0, import_node_fs9.readFileSync)(resolved.resolved, "utf-8")) !== expected) {
       throw new Error(`Applied source changed since TestPilot last wrote it: ${resolved.relative}. Re-validate and re-plan before repair.`);
     }
   }
   const workspace2 = new Workspace(options.repositoryRoot);
   const sourceBlocks = options.task.appliedChanges.flatMap((path3) => {
     const resolved = workspace2.tryResolve(path3);
-    if (!resolved || !(0, import_node_fs8.existsSync)(resolved.resolved)) return [];
-    const source = (0, import_node_fs8.readFileSync)(resolved.resolved, "utf-8").slice(0, 24e3);
+    if (!resolved || !(0, import_node_fs9.existsSync)(resolved.resolved)) return [];
+    const source = (0, import_node_fs9.readFileSync)(resolved.resolved, "utf-8").slice(0, 24e3);
     return [`SOURCE ${resolved.relative}
 \`\`\`typescript
 ${source}
@@ -289799,7 +289879,7 @@ ${sourceBlocks.join("\n\n")}`
   for (const change of scoped.filter((item) => /\.locators\.tsx?$/.test(item.path))) {
     const resolved = workspace2.tryResolve(change.path);
     if (!resolved) return [];
-    const before = (0, import_node_fs8.readFileSync)(resolved.resolved, "utf-8");
+    const before = (0, import_node_fs9.readFileSync)(resolved.resolved, "utf-8");
     const oldExpressions = new Set(extractLocatorExpressions(before).map(normalizeLocatorExpression));
     const proposedExpressions = extractLocatorExpressions(change.newContent ?? "");
     const newExpressions = proposedExpressions.map(normalizeLocatorExpression).filter((expression) => !oldExpressions.has(expression));
@@ -289986,7 +290066,7 @@ function parseGeneratedFiles(text, repositoryRoot, options = {}) {
     }
     changes.push({
       path: resolved.relative,
-      kind: (0, import_node_fs8.existsSync)((0, import_node_path10.join)(workspace2.rootPath, resolved.relative)) ? "modify" : "create",
+      kind: (0, import_node_fs9.existsSync)((0, import_node_path11.join)(workspace2.rootPath, resolved.relative)) ? "modify" : "create",
       newContent: content.endsWith("\n") ? content : `${content}
 `,
       reason: "Generated from the approved plan; each step mapped to indexed framework symbols.",
@@ -289997,20 +290077,20 @@ function parseGeneratedFiles(text, repositoryRoot, options = {}) {
 }
 
 // packages/cli/src/validate.ts
-var import_node_fs9 = require("node:fs");
-var import_node_path11 = require("node:path");
+var import_node_fs10 = require("node:fs");
+var import_node_path12 = require("node:path");
 var import_node_child_process5 = require("node:child_process");
 var DEFAULT_TIMEOUT_MS3 = 5 * 60 * 1e3;
 function runCommand(command, cwd, timeoutMs = DEFAULT_TIMEOUT_MS3, args) {
   const started = Date.now();
   const displayCommand = args ? `${command} ${args.map((arg) => JSON.stringify(arg)).join(" ")}` : command;
-  return new Promise((resolve5) => {
+  return new Promise((resolve6) => {
     let settled = false;
     let child;
     const finish = (result) => {
       if (settled) return;
       settled = true;
-      resolve5(result);
+      resolve6(result);
     };
     try {
       child = (0, import_node_child_process5.spawn)(command, args, {
@@ -290077,10 +290157,10 @@ function runCommand(command, cwd, timeoutMs = DEFAULT_TIMEOUT_MS3, args) {
   });
 }
 function readScripts(repositoryRoot) {
-  const pkgPath = (0, import_node_path11.join)(repositoryRoot, "package.json");
-  if (!(0, import_node_fs9.existsSync)(pkgPath)) return {};
+  const pkgPath = (0, import_node_path12.join)(repositoryRoot, "package.json");
+  if (!(0, import_node_fs10.existsSync)(pkgPath)) return {};
   try {
-    const pkg = JSON.parse((0, import_node_fs9.readFileSync)(pkgPath, "utf-8"));
+    const pkg = JSON.parse((0, import_node_fs10.readFileSync)(pkgPath, "utf-8"));
     return pkg.scripts ?? {};
   } catch {
     return {};
@@ -290103,8 +290183,8 @@ function checkPaths(changes, repositoryRoot) {
   };
 }
 function checkUnrelatedFiles(changes, repositoryRoot) {
-  const baselinePath = (0, import_node_path11.join)(repositoryRoot, ".tcoe-testpilot", "baseline.json");
-  if (!(0, import_node_fs9.existsSync)(baselinePath)) {
+  const baselinePath = (0, import_node_path12.join)(repositoryRoot, ".tcoe-testpilot", "baseline.json");
+  if (!(0, import_node_fs10.existsSync)(baselinePath)) {
     return {
       kind: "unrelated-files",
       description: "No files outside the approved change set were modified",
@@ -290117,7 +290197,7 @@ function checkUnrelatedFiles(changes, repositoryRoot) {
   }
   let baseline;
   try {
-    baseline = JSON.parse((0, import_node_fs9.readFileSync)(baselinePath, "utf-8"));
+    baseline = JSON.parse((0, import_node_fs10.readFileSync)(baselinePath, "utf-8"));
   } catch {
     return {
       kind: "unrelated-files",
@@ -290137,7 +290217,7 @@ function checkUnrelatedFiles(changes, repositoryRoot) {
     if (!resolved) continue;
     let now;
     try {
-      now = fingerprint((0, import_node_fs9.readFileSync)(resolved.resolved, "utf-8"));
+      now = fingerprint((0, import_node_fs10.readFileSync)(resolved.resolved, "utf-8"));
     } catch {
       modified.push(`${relPath} (deleted)`);
       continue;
@@ -290187,7 +290267,7 @@ async function checkScript(kind, scriptName, command, repositoryRoot, timeoutMs)
       skipReason: `No "${scriptName}" script in package.json.`
     };
   }
-  if (isPlaywrightTest && !(0, import_node_fs9.existsSync)((0, import_node_path11.join)(repositoryRoot, "playwright.config.ts"))) {
+  if (isPlaywrightTest && !(0, import_node_fs10.existsSync)((0, import_node_path12.join)(repositoryRoot, "playwright.config.ts"))) {
     return {
       kind,
       description: `${kind}: npm run ${scriptName}`,
@@ -290225,11 +290305,11 @@ ${failureOutput}`,
 }
 async function checkPlaywrightSpecs(testPaths, repositoryRoot, timeoutMs) {
   const description = "test: Playwright spec";
-  const cliPath = (0, import_node_path11.join)(repositoryRoot, "node_modules", "@playwright", "test", "cli.js");
+  const cliPath = (0, import_node_path12.join)(repositoryRoot, "node_modules", "@playwright", "test", "cli.js");
   const specs = [...new Set(testPaths)].filter((path3) => /\.spec\.tsx?$/i.test(path3));
   const workspace2 = new Workspace(repositoryRoot);
   const resolvedSpecs = specs.map((path3) => workspace2.tryResolve(path3)?.resolved);
-  const hasPlaywrightConfig = ["ts", "mts", "js", "mjs", "cts", "cjs"].some((extension) => (0, import_node_fs9.existsSync)((0, import_node_path11.join)(repositoryRoot, `playwright.config.${extension}`)));
+  const hasPlaywrightConfig = ["ts", "mts", "js", "mjs", "cts", "cjs"].some((extension) => (0, import_node_fs10.existsSync)((0, import_node_path12.join)(repositoryRoot, `playwright.config.${extension}`)));
   if (!hasPlaywrightConfig) {
     return {
       kind: "test",
@@ -290241,7 +290321,7 @@ async function checkPlaywrightSpecs(testPaths, repositoryRoot, timeoutMs) {
       skipReason: "No Playwright config found in the repository."
     };
   }
-  if (!(0, import_node_fs9.existsSync)(cliPath)) {
+  if (!(0, import_node_fs10.existsSync)(cliPath)) {
     return {
       kind: "test",
       description,
@@ -290264,7 +290344,7 @@ async function checkPlaywrightSpecs(testPaths, repositoryRoot, timeoutMs) {
     };
   }
   const testFilters = resolvedSpecs.map(
-    (path3) => (0, import_node_path11.relative)(workspace2.rootPath, path3).replace(/\\/g, "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    (path3) => (0, import_node_path12.relative)(workspace2.rootPath, path3).replace(/\\/g, "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   );
   const args = [cliPath, "test", ...testFilters];
   const command = process.execPath;
@@ -290368,8 +290448,8 @@ function analyseFailure(report, changes, repositoryRoot) {
     }
     const anyChange = changes[0];
     if (anyChange) {
-      const abs = (0, import_node_path11.join)(repositoryRoot, anyChange.path);
-      const exists = (0, import_node_fs9.existsSync)(abs);
+      const abs = (0, import_node_path12.join)(repositoryRoot, anyChange.path);
+      const exists = (0, import_node_fs10.existsSync)(abs);
       return {
         likelyCause: "The generated code does not typecheck against the framework.",
         evidence: [
@@ -290593,19 +290673,20 @@ var WorkspaceService = class {
       const targetUrl = cfg.targetUrl || extractFirstUrl(raw);
       let browseMode;
       if (targetUrl) {
-        const browserWorkingDirectory = (0, import_node_path12.join)(cfg.stateDir, "browser-cli");
-        (0, import_node_fs10.mkdirSync)(browserWorkingDirectory, { recursive: true });
-        browserHost = await IsolatedCdpBrowser.launch((0, import_node_path12.join)(cfg.stateDir, "browser-sessions"));
+        const browserWorkingDirectory = (0, import_node_path13.join)(cfg.stateDir, "browser-cli");
+        (0, import_node_fs11.mkdirSync)(browserWorkingDirectory, { recursive: true });
+        browserHost = await IsolatedCdpBrowser.launch((0, import_node_path13.join)(cfg.stateDir, "browser-sessions"));
         browser = createBrowserSession({
           repositoryRoot: cfg.frameworkRepo,
           workingDirectory: browserWorkingDirectory,
           cdpEndpoint: browserHost.endpoint,
           // The shared Chromium host is headed, private, and isolated to this run.
           mcp: {
-            // Spawn only after the CLI primary fails. Use cmd.exe explicitly on Windows
-            // because npm exposes npx as a .cmd shim that spawn(shell:false) cannot run.
-            command: process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "npx",
-            serverArgs: process.platform === "win32" ? ["/d", "/s", "/c", "npx -y @playwright/mcp@latest"] : ["-y", "@playwright/mcp@latest"]
+            // Launch the installed MCP cli.js directly with node.exe so MCP stdio
+            // is not piped through npx.cmd on Windows.
+            command: "node",
+            serverArgs: [],
+            runtimeDirectory: (0, import_node_path13.join)(cfg.stateDir, "tools", "playwright-mcp")
           }
         });
         browseMode = "follow-steps";
@@ -290761,8 +290842,8 @@ ${driftBeforeApply.map((reason) => `\u2022 ${reason}`).join("\n")}`);
     });
     const file = files?.[0];
     if (!file) return;
-    this.panel.setSelectedFile(file.fsPath, (0, import_node_path12.basename)(file.fsPath));
-    this.panel.postStatus(`Selected manual test case file: ${(0, import_node_path12.basename)(file.fsPath)}. Click Generate when ready.`);
+    this.panel.setSelectedFile(file.fsPath, (0, import_node_path13.basename)(file.fsPath));
+    this.panel.postStatus(`Selected manual test case file: ${(0, import_node_path13.basename)(file.fsPath)}. Click Generate when ready.`);
   }
   /** Load the current editor selection into the manual case editor. */
   async useEditorSelection() {
@@ -291025,8 +291106,8 @@ ${renderReport(task, void 0, false)}`
     }
     const evidence = [];
     const candidates = [];
-    const workingDirectory = (0, import_node_path12.join)(stateDir, "browser-mcp-repair");
-    (0, import_node_fs10.mkdirSync)(workingDirectory, { recursive: true });
+    const workingDirectory = (0, import_node_path13.join)(stateDir, "browser-mcp-repair");
+    (0, import_node_fs11.mkdirSync)(workingDirectory, { recursive: true });
     const command = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "npx";
     const serverArgs = process.platform === "win32" ? ["/d", "/s", "/c", "npx -y @playwright/mcp@latest"] : ["-y", "@playwright/mcp@latest"];
     this.panel.postStatus("Replaying the manual steps with Playwright MCP to capture fresh locator evidence\u2026");
@@ -291199,7 +291280,7 @@ ${locatorEvidence.join("\n")}`);
     if (!cfg) return;
     let tasks = [];
     try {
-      tasks = (0, import_node_fs10.readdirSync)(cfg.stateDir).filter((name) => name.endsWith(".task.json")).map((name) => loadTask(cfg.stateDir, name.slice(0, -".task.json".length))).filter((task) => task !== null).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      tasks = (0, import_node_fs11.readdirSync)(cfg.stateDir).filter((name) => name.endsWith(".task.json")).map((name) => loadTask(cfg.stateDir, name.slice(0, -".task.json".length))).filter((task) => task !== null).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     } catch {
     }
     if (tasks.length === 0) {
@@ -291231,9 +291312,9 @@ ${renderReport(selected.task, void 0, false)}`
     if (answer !== "Delete Task History") return;
     let deleted = 0;
     try {
-      for (const name of (0, import_node_fs10.readdirSync)(cfg.stateDir)) {
+      for (const name of (0, import_node_fs11.readdirSync)(cfg.stateDir)) {
         if (!/\.(task|checkpoint)\.json$/.test(name)) continue;
-        (0, import_node_fs10.unlinkSync)((0, import_node_path12.join)(cfg.stateDir, name));
+        (0, import_node_fs11.unlinkSync)((0, import_node_path13.join)(cfg.stateDir, name));
         deleted++;
       }
     } catch {
@@ -291244,7 +291325,7 @@ ${renderReport(selected.task, void 0, false)}`
     const cfg = this.config();
     if (!cfg) return;
     try {
-      const result = analyzeFramework({ repositoryRoot: cfg.frameworkRepo, indexDir: (0, import_node_path12.join)(cfg.stateDir, "index") });
+      const result = analyzeFramework({ repositoryRoot: cfg.frameworkRepo, indexDir: (0, import_node_path13.join)(cfg.stateDir, "index") });
       const document2 = await vscode.workspace.openTextDocument({ language: "markdown", content: summariseAnalysis(result) });
       await vscode.window.showTextDocument(document2, { preview: false });
       await vscode.window.showInformationMessage(`Framework index refreshed (${result.scan.files.length} source files).`);

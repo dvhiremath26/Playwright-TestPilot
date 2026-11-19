@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { basename, dirname, join, relative } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import type {
   AgentStage,
@@ -2753,8 +2753,8 @@ export async function generateChangesFromProvider(
     values: extractManualTestData(testCase),
   }))
   // Always create the scenario data module for manual cases, including an empty
-  // row when the case contains no non-secret values. This keeps generated specs
-  // on the framework's DataLoader path instead of silently omitting the file.
+  // row when the case contains no non-secret values. Generated specs import this
+  // JSON module directly through the framework's @test-data alias.
   const manualTestData = manualCases.length > 0
     ? {
         moduleName: scenarioStem,
@@ -2762,7 +2762,6 @@ export async function generateChangesFromProvider(
         sharedFlow: casesShareFlow(manualCases, dataCases),
         targetPath: targetDataPath,
         existingJson: readExistingJson(options.repositoryRoot, targetDataPath),
-        dataTypesPath: 'src/utils/testData/dataTypes.ts',
       }
     : undefined
   const targetSpecPath = manualCases.length > 1
@@ -2807,7 +2806,7 @@ export async function generateChangesFromProvider(
       content:
         'You emit file content only. Emit nothing but the files requested, each as a fenced block tagged with its path. ' +
         'The target framework conventions are mandatory. Follow the included real source examples and never substitute generic Playwright patterns for the framework architecture. Never use test.only or invent a fixture, action method, or helper API that was not discovered. Locator fields must be Playwright Locator objects, not strings containing locator code. Every locator must exactly match a Playwright CLI snapshot observation or an indexed framework locator; comments such as "adjust this selector" are not acceptable evidence. If a snapshot locator is scoped to an iframe, preserve the entire frameLocator/contentFrame chain in the paired locator class and page actions; do not strip the frame scope. Use an iframe scope only when that exact full frameLocator/contentFrame locator expression appears in browser evidence or in a relevant indexed locator supplied for this screen. Observing a role/name by itself does not authorize adding frameLocator(...). Never create framed and unframed variants of the same control. Reuse matching indexed locator fields and their paired page objects; do not redeclare a matching control in a new locator class when a relevant existing locator is supplied. ' +
-        'Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.',
+        'Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. Import the scenario JSON directly with a default import from @test-data/<folder>/<file>.json; do not use DataLoader. Each named case is a direct object of field values, with no title or values wrapper. Access each case and field explicitly, such as scenarioData.createSalesOrder01.material. Generate one standalone test(...) block per manual case using its literal title and literal case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.',
     },
     {
       role: 'user',
@@ -2888,7 +2887,10 @@ export async function generateChangesFromProvider(
       changes,
       facts.actionMethods,
     ), options.task.browserLocatorCandidates ?? [])
-    return manualTestData ? rewriteHardcodedManualData(withObservedFrames, manualTestData) : withObservedFrames
+    const withManualData = manualTestData
+      ? applyDirectJsonDataFallback(rewriteHardcodedManualData(withObservedFrames, manualTestData), manualTestData)
+      : withObservedFrames
+    return normalizeBasePageImports(withManualData)
   }
 
   let response = await provider.chat(messages, { purpose: 'generate', modelId, signal: options.signal })
@@ -2899,10 +2901,10 @@ export async function generateChangesFromProvider(
   const maxCorrections = 2
   const needsCorrection = (candidate: FileChange[]): boolean =>
     !hasSpec(candidate) || standardIssues(candidate).length > 0 ||
-    (!!manualTestData && manualDataUsageIssues(candidate, manualTestData, frameworkExamples.dataLoaderImportPath).length > 0)
+      (!!manualTestData && manualDataUsageIssues(candidate, manualTestData, undefined, 'direct-json').length > 0)
   for (let correction = 0; correction < maxCorrections && needsCorrection(changes); correction++) {
     const issues = standardIssues(changes)
-    const dataIssues = manualTestData ? manualDataUsageIssues(changes, manualTestData, frameworkExamples.dataLoaderImportPath) : []
+    const dataIssues = manualTestData ? manualDataUsageIssues(changes, manualTestData, undefined, 'direct-json') : []
     const failedStepOrders = new Set(issues.flatMap((issue) => {
       const order = issue.match(/manual step\s+(\d+)/i)?.[1]
       return order ? [Number(order)] : []
@@ -2925,7 +2927,7 @@ export async function generateChangesFromProvider(
       ...(dataIssues.length > 0 ? [`It failed to use the extracted test data:\n${dataIssues.map((issue) => `- ${issue}`).join('\n')}`] : []),
       'Return the complete file set again. Implement every manual step in order; the generated code does not need to repeat the manual wording verbatim. Correct every listed standards violation and copy the architecture from the real source examples where needed. For new page behavior, create page-object/locator code using matching browser observations; never invent a selector that is absent from evidence. Every new locator expression must exactly match an expression in the Playwright CLI observations or an indexed framework locator. Use an iframe scope only when that exact full scope appears in browser evidence or a relevant indexed locator for this screen; a matching role/name without frame evidence is insufficient. Reuse matching indexed locator fields and page objects instead of declaring duplicate controls. For data-driven text assertions, a locator-class method may accept the expected value and use getByText(expectedValue) only when a literal getByText candidate for that assertion is present in the matching snapshot evidence; pass the value from the data row. If evidence is insufficient, do not invent a locator or leave a guessed CSS selector with an adjustment comment; keep the specific step unresolved and explain which live snapshot is missing.',
         'Page methods must never call this.page.getByRole(...), this.page.frameLocator(...), this.page.locator(...), or this.page.goto(...). Put the observed locator in the paired locator class, then call the confirmed framework wrapper: await this.actions.fill(this.locators.FIELD, value), await this.actions.click(this.locators.FIELD), and await this.actions.browser.navigate(url). Preserve a frame scope only for an element observed inside that exact iframe; use no frame scope for a main-document element. Match the target framework examples and do not use raw Playwright interactions inside a page object.',
-      'Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. DataLoader.get(module) returns a typed JSON object whose named case properties contain values directly; do not expect title/values wrappers. Generate one explicit standalone test(...) block per manual case using its literal manual title and literal typed case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.',
+      'Preserve the manual step order and execute each navigation exactly where it appears. If a step navigates to a URL and the next step clicks a link, navigate to that stated URL and then click the snapshot-observed link; do not navigate directly to the linked page before attempting the click. Name each test from its manual test title; do not read the title from test data unless that field is explicitly present. Import the scenario JSON directly with a default import from @test-data/<folder>/<file>.json; do not use DataLoader. Each named case is a direct object of field values, with no title or values wrapper. Access each case and field explicitly, such as scenarioData.createSalesOrder01.material. Generate one standalone test(...) block per manual case using its literal title and literal case property. Do not use loops, Object.keys/entries/values, test.each, or map/forEach to create tests.',
       renderScreenArchitectureRequirements(manualCases, options.task.browserLocatorCandidates ?? []),
       'Output only fenced TypeScript file blocks with repository-relative paths, including a tests/*.spec.ts file.',
     ].filter(Boolean).join('\n\n')
@@ -3004,33 +3006,14 @@ export async function generateChangesFromProvider(
     )
   }
   if (manualTestData) {
-    let dataUseIssues = manualDataUsageIssues(changes, manualTestData, frameworkExamples.dataLoaderImportPath)
-    let usedDirectJsonFallback = false
-    if (dataUseIssues.length > 0 && supportsJsonModuleImports(options.repositoryRoot)) {
-      const directJsonChanges = applyDirectJsonDataFallback(changes, manualTestData)
-      const directJsonIssues = manualDataUsageIssues(
-        directJsonChanges,
-        manualTestData,
-        frameworkExamples.dataLoaderImportPath,
-        'direct-json',
-      )
-      if (directJsonIssues.length === 0) {
-        changes = directJsonChanges
-        dataUseIssues = []
-        usedDirectJsonFallback = true
-      }
-    }
+    const dataUseIssues = manualDataUsageIssues(changes, manualTestData, undefined, 'direct-json')
     if (dataUseIssues.length > 0) {
       throw new Error(`The selected Copilot model did not wire the extracted manual test data after two automatic correction attempts. No files were written:\n${dataUseIssues.map((issue) => `- ${issue}`).join('\n')}`)
     }
     // Page objects are screen-level assets. Reuse paths selected from the framework
     // index; test data remains scenario-scoped and is merged by its own builder.
-    changes = changes.filter((change) =>
-      change.path !== targetDataPath &&
-      change.path !== 'src/utils/testData/dataTypes.ts',
-    )
-    changes.push(...buildManualDataChanges(options.repositoryRoot, targetDataPath, manualTestData)
-      .filter((change) => !usedDirectJsonFallback || change.path !== 'src/utils/testData/dataTypes.ts'))
+    changes = changes.filter((change) => change.path !== targetDataPath)
+    changes.push(...buildManualDataChanges(options.repositoryRoot, targetDataPath, manualTestData))
   } else {
     // Keep model-proposed updates to existing screen page objects reviewable.
   }
@@ -3051,7 +3034,6 @@ interface ExtractedManualData {
   sharedFlow: boolean
   targetPath: string
   existingJson?: string
-  dataTypesPath?: string
 }
 
 /** Update an existing spec only when its title is the same case, not just a similar workflow. */
@@ -3288,21 +3270,16 @@ function readExistingJson(repositoryRoot: string, relativePath: string): string 
   return readFileSync(path, 'utf-8').slice(0, 12000)
 }
 
-/** Direct JSON imports are a last-resort data source when generated DataLoader wiring is invalid. */
-function supportsJsonModuleImports(repositoryRoot: string): boolean {
-  const tsconfigPath = join(repositoryRoot, 'tsconfig.json')
-  if (!existsSync(tsconfigPath)) return false
-  try {
-    const source = readFileSync(tsconfigPath, 'utf-8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g, '')
-    return /"resolveJsonModule"\s*:\s*true\b/.test(source)
-  } catch {
-    return false
-  }
+/** Return the framework alias used by specs to import the generated scenario JSON. */
+function manualDataImportSpecifier(data: ExtractedManualData): string {
+  return `@test-data/${data.targetPath.replace(/^test-data\//, '').replace(/\\/g, '/')}`
 }
 
-/** Replace broken DataLoader-only spec wiring with a typed import of the generated JSON module. */
+/** Enforce direct JSON imports and direct case.field access in generated specs. */
 function applyDirectJsonDataFallback(changes: FileChange[], data: ExtractedManualData): FileChange[] {
   const jsonImportName = `${data.moduleName}Json`
+  const importSpecifier = manualDataImportSpecifier(data)
+  const dataFileSuffix = data.targetPath.replace(/^test-data\//, '').replace(/\\/g, '/')
   return changes.map((change) => {
     if (!/(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, '/')}`)) return change
     let source = change.newContent ?? ''
@@ -3310,7 +3287,19 @@ function applyDirectJsonDataFallback(changes: FileChange[], data: ExtractedManua
       `(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)`,
     ))?.[1]
 
+    const priorJsonImports = [...source.matchAll(/^import\s+([A-Za-z_$][\w$]*)\s+from\s+(['"])([^'"]+)\2\s*;?\s*$/gm)]
+      .filter((match) => match[3]!.replace(/\\/g, '/').endsWith(dataFileSuffix))
+    for (const match of priorJsonImports) {
+      const previousName = match[1]!
+      if (previousName !== jsonImportName) {
+        source = source.replace(new RegExp(`\\b${escapeRegExp(previousName)}\\b`, 'g'), jsonImportName)
+      }
+    }
+
     source = source.replace(/^import\s+\{\s*DataLoader\s*\}\s+from\s+['"][^'"]+['"]\s*;?\s*\r?\n/gm, '')
+    source = source.replace(/^import\s+[A-Za-z_$][\w$]*\s+from\s+(['"])[^'"]+\1\s*;?\s*\r?\n/gm, (line) =>
+      priorJsonImports.some((match) => line.includes(match[3]!)) ? '' : line,
+    )
     if (dataVariable) {
       source = source.replace(new RegExp(
         `^\\s*(?:const|let)\\s+${escapeRegExp(dataVariable)}\\s*=\\s*DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)\\s*;?\\s*\\r?\\n`,
@@ -3322,8 +3311,9 @@ function applyDirectJsonDataFallback(changes: FileChange[], data: ExtractedManua
     source = source.replace(new RegExp(`DataLoader\\s*\\.\\s*get\\(\\s*['"]${escapeRegExp(data.moduleName)}['"]\\s*\\)`, 'g'), jsonImportName)
 
     for (const testCase of data.cases) {
-      const row = `${jsonImportName}['${testCase.caseKey}']`
-      source = source.replace(new RegExp(`${escapeRegExp(jsonImportName)}\\s*\\[\\s*['"]${escapeRegExp(testCase.caseKey)}['"]\\s*\\]\\s*\\.\\s*values\\b`, 'g'), row)
+      const row = `${jsonImportName}.${testCase.caseKey}`
+      source = source.replace(new RegExp(`${escapeRegExp(jsonImportName)}\\s*\\[\\s*['"]${escapeRegExp(testCase.caseKey)}['"]\\s*\\]`, 'g'), row)
+      source = source.replace(new RegExp(`${escapeRegExp(jsonImportName)}\\s*(?:\\[\\s*['"]${escapeRegExp(testCase.caseKey)}['"]\\s*\\]|\\.\\s*${escapeRegExp(testCase.caseKey)}\\b)\\s*\\.\\s*values\\b`, 'g'), row)
       const titlePattern = new RegExp(`\\btest\\s*\\(\\s*(['"\x60])${escapeRegExp(testCase.title)}\\1`)
       const titleMatch = titlePattern.exec(source)
       if (!titleMatch) continue
@@ -3338,17 +3328,29 @@ function applyDirectJsonDataFallback(changes: FileChange[], data: ExtractedManua
       source = source.slice(0, start) + block + source.slice(end)
     }
 
-    const importPath = relative(dirname(change.path), data.targetPath).replace(/\\/g, '/')
-    const specifier = importPath.startsWith('.') ? importPath : `./${importPath}`
-    const importLine = `import ${jsonImportName} from '${specifier}'\n`
-    const firstImport = source.match(/^import\s/m)
-    source = firstImport ? source.slice(0, firstImport.index) + importLine + source.slice(firstImport.index) : importLine + source
+    const expectedImport = new RegExp(`^import\\s+${escapeRegExp(jsonImportName)}\\s+from\\s+['"]${escapeRegExp(importSpecifier)}['"]\\s*;?\\s*$`, 'm')
+    if (!expectedImport.test(source)) source = `import ${jsonImportName} from '${importSpecifier}'\n${source}`
     return {
       ...change,
       newContent: source,
-      reason: `${change.reason ?? ''} DataLoader wiring was invalid, so the scenario JSON is imported directly as the configured fallback.`.trim(),
-      evidence: [...(change.evidence ?? []), 'Used the framework-supported direct JSON import fallback after DataLoader wiring failed validation.'],
+      reason: `${change.reason ?? ''} The scenario JSON is imported directly through the framework @test-data alias.`.trim(),
+      evidence: [...(change.evidence ?? []), 'Scenario values are read directly from the imported JSON case objects.'],
     }
+  })
+}
+
+/** Normalize generated page classes to the framework's canonical BasePage alias. */
+function normalizeBasePageImports(changes: FileChange[]): FileChange[] {
+  return changes.map((change) => {
+    if (!/(^|\/)pages\/.+(?:\.page|Page)\.tsx?$/i.test(change.path.replace(/\\/g, '/')) || !change.newContent) return change
+    const source = change.newContent.replace(
+      /from\s+(['"])(?:[^'"]*\/)?(?:@src\/)?pages\/Base\/base\.page\1/gi,
+      "from '@pages/Base/base.page'",
+    ).replace(
+      /from\s+(['"])(?:\.\.\/)+Base\/base\.page\1/gi,
+      "from '@pages/Base/base.page'",
+    )
+    return source === change.newContent ? change : { ...change, newContent: source }
   })
 }
 
@@ -3415,10 +3417,10 @@ function manualDataUsageIssues(
   changes: FileChange[],
   data: ExtractedManualData,
   expectedDataLoaderImportPath?: string,
-  accessMode: 'data-loader' | 'direct-json' = 'data-loader',
+  accessMode: 'data-loader' | 'direct-json' = 'direct-json',
 ): string[] {
   const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, '/')}`))
-  if (specs.length === 0) return ['No spec was returned to verify DataLoader usage.']
+  if (specs.length === 0) return ['No spec was returned to verify direct test-data JSON usage.']
   const issues: string[] = []
   const modulePattern = new RegExp(`DataLoader\\.get\\(\\s*['"]${data.moduleName}['"]\\s*\\)`)
   const jsonImportName = `${data.moduleName}Json`
@@ -3431,10 +3433,9 @@ function manualDataUsageIssues(
     }
     if (accessMode === 'data-loader' && !modulePattern.test(source)) issues.push(`${spec.path} must load the shared '${data.moduleName}' module through DataLoader.`)
     if (accessMode === 'direct-json') {
-      const expectedPath = relative(dirname(spec.path), data.targetPath).replace(/\\/g, '/')
-      const expectedSpecifier = expectedPath.startsWith('.') ? expectedPath : `./${expectedPath}`
-      if (jsonImport?.[1] !== expectedSpecifier) issues.push(`${spec.path} must import the generated '${data.targetPath}' JSON directly using its relative path.`)
-      if (dataLoaderImport || /DataLoader\s*\.\s*get\s*\(/.test(source)) issues.push(`${spec.path} must use the direct JSON import consistently after the DataLoader fallback.`)
+      const expectedSpecifier = manualDataImportSpecifier(data)
+      if (jsonImport?.[1] !== expectedSpecifier) issues.push(`${spec.path} must import the generated JSON directly from '${expectedSpecifier}'.`)
+      if (dataLoaderImport || /DataLoader\s*\.\s*get\s*\(/.test(source)) issues.push(`${spec.path} must import and use the scenario JSON directly; DataLoader is not used for generated specs.`)
     }
   }
   const generatedCode = changes
@@ -3456,7 +3457,7 @@ function manualDataUsageIssues(
     issues.push('Generate separate, explicit test(...) blocks for the manual cases. Do not loop through data rows or parameterize tests.')
   }
   if (/\bconst\s*\{\s*title\s*,\s*values\s*\}\s*=/.test(combinedSource)) {
-    issues.push(`Rows in DataLoader.get('${data.moduleName}') contain the case values directly; they do not have title/values wrappers. Use the manual title in test(...) and access the row's fields directly.`)
+    issues.push(`Rows in '${manualDataImportSpecifier(data)}' contain case values directly; they do not have title/values wrappers. Use the manual title in test(...) and access the row's fields directly.`)
   }
   if (dataVariable && new RegExp(`\\b${escapeRegExp(dataVariable)}\\s*\\[\\s*[A-Za-z_$][\\w$]*\\s*\\]`).test(combinedSource)) {
     issues.push(`Do not index DataLoader.get('${data.moduleName}') with a string variable. Use each case's literal typed property in its own explicit test block.`)
@@ -3474,19 +3475,21 @@ function manualDataUsageIssues(
     const module = escapeRegExp(data.moduleName)
     const caseKey = escapeRegExp(testCase.caseKey)
     const directRow = accessMode === 'direct-json'
-      ? new RegExp(`${escapeRegExp(jsonImportName)}\\s*\\[\\s*['"]${caseKey}['"]\\s*\\](?!\\s*\\.\\s*values\\b)`)
+      ? new RegExp(`${escapeRegExp(jsonImportName)}\\s*(?:\\.\\s*${caseKey}\\b|\\[\\s*['"]${caseKey}['"]\\s*\\])(?!\\s*\\.\\s*values\\b)`)
       : new RegExp(`DataLoader\\s*\\.\\s*get\\(\\s*['"]${module}['"]\\s*\\)\\s*\\[\\s*['"]${caseKey}['"]\\s*\\](?!\\s*\\.\\s*values\\b)`)
     const typedPropertyRow = dataVariable
       ? new RegExp(`\\b${escapeRegExp(dataVariable)}\\s*(?:\\.\\s*${caseKey}\\b|\\[\\s*['"]${caseKey}['"]\\s*\\])`)
       : /(?!)/
-    const valuesWrapper = new RegExp(`DataLoader\\s*\\.\\s*get\\(\\s*['"]${module}['"]\\s*\\)\\s*\\[\\s*['"]${caseKey}['"]\\s*\\]\\s*\\.\\s*values\\b`)
+    const valuesWrapper = accessMode === 'direct-json'
+      ? new RegExp(`${escapeRegExp(jsonImportName)}\\s*(?:\\.\\s*${caseKey}\\b|\\[\\s*['"]${caseKey}['"]\\s*\\])\\s*\\.\\s*values\\b`)
+      : new RegExp(`DataLoader\\s*\\.\\s*get\\(\\s*['"]${module}['"]\\s*\\)\\s*\\[\\s*['"]${caseKey}['"]\\s*\\]\\s*\\.\\s*values\\b`)
     const typedValuesWrapper = dataVariable
       ? new RegExp(`\\b${escapeRegExp(dataVariable)}\\s*(?:\\.\\s*${caseKey}\\b|\\[\\s*['"]${caseKey}['"]\\s*\\])\\s*\\.\\s*values\\b`)
       : /(?!)/
     if (valuesWrapper.test(combinedSource) || typedValuesWrapper.test(combinedSource)) {
-      issues.push(`Data row '${testCase.caseKey}' is already the values object; remove the incorrect '.values' wrapper after DataLoader.get(...)[caseKey].`)
+      issues.push(`Data row '${testCase.caseKey}' is already the values object; remove the incorrect '.values' wrapper after selecting it from the imported JSON.`)
     } else if (!directRow.test(combinedSource) && !typedPropertyRow.test(combinedSource)) {
-      issues.push(`Select data row '${testCase.caseKey}' directly from DataLoader.get('${data.moduleName}'); case rows do not have a '.values' wrapper.`)
+      issues.push(`Select data row '${testCase.caseKey}' directly from the imported JSON '${manualDataImportSpecifier(data)}'; case rows do not have a '.values' wrapper.`)
     }
     for (const [key, value] of Object.entries(testCase.values)) {
       if (!combinedSource.includes(`.${key}`) && !combinedSource.includes(`['${key}']`) && !combinedSource.includes(`["${key}"]`)) {
@@ -3741,7 +3744,7 @@ function findAssertionLocatorIssues(
   return [...new Set(issues)]
 }
 
-/** Merge the case row into the shared JSON module and register its inferred TS type. */
+/** Merge case rows into the scenario JSON module used by direct spec imports. */
 function buildManualDataChanges(
   repositoryRoot: string,
   dataPath: string,
@@ -3767,21 +3770,6 @@ function buildManualDataChanges(
     evidence: ['Values were extracted from quoted fill/enter/type actions in the normalized manual test case.'],
   }]
 
-  const typePath = join(repositoryRoot, 'src/utils/testData/dataTypes.ts')
-  if (!existsSync(typePath)) return changes
-  const typeSource = readFileSync(typePath, 'utf-8')
-  const registry = typeSource.match(/(export\s+interface\s+DataRegistry\s*\{)([\s\S]*?)(\n\s*\})/)
-  if (!registry || new RegExp(`^\\s*${data.moduleName}\\s*:`, 'm').test(registry[2]!)) return changes
-  // DataLoader imports are resolved from src/utils/testData; ../../../ reaches the repository root.
-  const desiredEntry = `\n  ${data.moduleName}: typeof import('../../../test-data/${data.moduleName}/${data.moduleName}.qa.json')`
-  const nextSource = typeSource.replace(registry[0], `${registry[1]}${registry[2]}${desiredEntry}${registry[3]}`)
-  changes.push({
-    path: 'src/utils/testData/dataTypes.ts',
-    kind: 'modify',
-    newContent: nextSource.endsWith('\n') ? nextSource : `${nextSource}\n`,
-    reason: `Registered the '${data.moduleName}' JSON module in the framework's DataRegistry so DataLoader.get remains typed.`,
-    evidence: ['Matched the existing DataRegistry typeof import convention in the target framework.'],
-  })
   return changes
 }
 
@@ -3839,9 +3827,7 @@ function renderFrameworkExamples(analysis: FrameworkAnalysisResult): FrameworkGe
   const locatorSource = locatorCandidates[0]?.source ?? ''
   const fixtureImportPath = testSource.match(/import\s+\{[^}]*\btest\b[^}]*\}\s+from\s+['"]([^'"]+)['"]/s)?.[1]
   const dataLoaderImportPath = testSource.match(/import\s+\{\s*DataLoader\s*\}\s+from\s+['"]([^'"]+)['"]/)?.[1]
-  const dataLoaderConvention = dataLoaderImportPath
-    ? `\n\nTarget framework DataLoader import: ${dataLoaderImportPath}. Case rows returned by DataLoader.get are direct JSON objects; access values as DataLoader.get(module)[caseKey].field.`
-    : ''
+  const dataLoaderConvention = '\n\nGenerated test-data convention: import the scenario JSON directly from @test-data/<folder>/<file>.json, then read case fields as scenarioData.caseKey.field. Do not use DataLoader or a .values wrapper.'
 
   return {
     text: `${text}${dataLoaderConvention}`,
@@ -3865,8 +3851,8 @@ function findFrameworkStandardIssues(
 ): string[] {
   const issues: string[] = []
   const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, '/')}`))
-  const pages = changes.filter((change) => /(^|\/)pages\/.+\.page\.tsx?$/.test(`/${change.path.replace(/\\/g, '/')}`))
-  const locators = changes.filter((change) => /(^|\/)pages\/.+\.locators\.tsx?$/.test(`/${change.path.replace(/\\/g, '/')}`))
+  const pages = changes.filter((change) => /(^|\/)pages\/.+(?:\.page|Page)\.tsx?$/i.test(`/${change.path.replace(/\\/g, '/')}`))
+  const locators = changes.filter((change) => /(^|\/)pages\/.+(?:\.locators|Locators)\.tsx?$/i.test(`/${change.path.replace(/\\/g, '/')}`))
 
   for (const spec of specs) {
     const source = spec.newContent ?? ''
@@ -3892,6 +3878,10 @@ function findFrameworkStandardIssues(
     const source = page.newContent ?? ''
     if (examples.pageExtendsBasePage && !/class\s+\w+\s+extends\s+BasePage\b/.test(source)) {
       issues.push(`${page.path} must extend BasePage, as existing framework page classes do.`)
+    }
+    if (/class\s+\w+\s+extends\s+BasePage\b/.test(source) &&
+        !/import\s+\{\s*BasePage\s*\}\s+from\s+['"]@pages\/Base\/base\.page['"]/.test(source)) {
+      issues.push(`${page.path} must import BasePage from '@pages/Base/base.page'.`)
     }
     if (examples.pageUsesActionFacade && /this\.page\.(?:frameLocator|locator|getBy\w+|goto)\s*\(/.test(source)) {
       issues.push(`${page.path} bypasses the framework Actions facade; page methods should call this.actions and use this.locators.`)

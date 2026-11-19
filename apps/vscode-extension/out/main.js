@@ -287605,12 +287605,15 @@ async function gatherEvidenceForTestCase(browser, options) {
           action.kind === "click" && Boolean(action.intent),
           isSearchTarget(action.target)
         )[0]?.score ?? 0;
-        const domElements = await inspectVisibleDomTargets(
+        const tableColumnTarget = action.kind === "fill" ? normalizeTableColumnTarget(action.target) : "";
+        const directTableTargets = tableColumnTarget ? await inspectSapTableColumnTargets(browser, tableColumnTarget, options.signal) : [];
+        const domElements = tableColumnTarget ? directTableTargets : await inspectVisibleDomTargets(
           browser,
           action.target,
           options.signal,
           isSidebarNavigationStep(step.action)
         );
+        const observedDomElements = [...directTableTargets, ...domElements];
         if (domElements.length > 0) {
           const afterInspection = await browser.capture(void 0, { signal: options.signal });
           if (afterInspection) snapshot = afterInspection;
@@ -287632,7 +287635,7 @@ async function gatherEvidenceForTestCase(browser, options) {
             });
           }
         }
-        const tableCellTarget = action.kind === "fill" ? selectNextEmptyTableCell(domElements, action.target, tableRowCursors) : void 0;
+        const tableCellTarget = action.kind === "fill" ? selectNextEmptyTableCell(observedDomElements, action.target, tableRowCursors) : void 0;
         const snapshotTableSelection = action.kind === "fill" && !tableCellTarget ? selectRepeatedTableSnapshotTarget(snapshot, compatibleTargets, action.target, snapshotTableRowCursors) : void 0;
         if (tableCellTarget) compatibleTargets = [tableCellTarget];
         else if (snapshotTableSelection) compatibleTargets = [snapshotTableSelection.element];
@@ -288341,6 +288344,118 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
     const expression = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `locator(${JSON.stringify(css)})` : unnamedUniqueSearchbox ? `getByRole("searchbox")` : row.role && row.role !== "generic" ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : `getByText(${JSON.stringify(row.name)}, { exact: true })`;
     const selector = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `css=${css}` : unnamedUniqueSearchbox ? "role=searchbox" : row.role && row.role !== "generic" ? `role=${row.role}[name=${JSON.stringify(row.name)}]` : `text=${JSON.stringify(row.name)}`;
     return [{ ref: selector, role: row.role, name: row.name, actionable: true, locatorExpression: expression, context: row.context, navigation: row.navigation, tableField: row.tableField, tableGridKey: row.tableGridKey, tableColumnName: row.tableColumnName, tableRowIndex: row.tableRowIndex, tableCellValue: row.tableCellValue, tableCellExpression: row.tableCellExpression }];
+  });
+}
+async function inspectSapTableColumnTargets(browser, requestedColumn, signal) {
+  if (!browser.runCode || !requestedColumn) return [];
+  const result = await browser.runCode(`async page => {
+    const wanted = ${JSON.stringify(requestedColumn)};
+    const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const output = [];
+    const frames = page.frames();
+    for (const frame of frames) {
+      const frameSelectors = [];
+      let child = frame;
+      let safe = true;
+      while (child.parentFrame()) {
+        const parent = child.parentFrame();
+        let element;
+        try { element = await child.frameElement(); } catch { safe = false; break; }
+        if (!parent || !element) { safe = false; break; }
+        const identity = await element.evaluate(el => {
+          const doc = el.ownerDocument;
+          const frames = Array.from(doc.querySelectorAll('iframe'));
+          const id = el.id || '';
+          const name = el.getAttribute('name') || '';
+          const title = el.getAttribute('title') || '';
+          if (id && frames.filter(item => item.id === id).length === 1) return { selector: 'iframe[id=' + JSON.stringify(id) + ']' };
+          if (name && frames.filter(item => item.getAttribute('name') === name).length === 1) return { selector: 'iframe[name=' + JSON.stringify(name) + ']' };
+          if (title && frames.filter(item => item.getAttribute('title') === title).length === 1) return { selector: 'iframe[title=' + JSON.stringify(title) + ']' };
+          return { selector: 'iframe', ordinal: frames.indexOf(el) };
+        });
+        if (!identity || identity.ordinal < 0 && !identity.selector) { safe = false; break; }
+        frameSelectors.unshift(identity);
+        child = parent;
+      }
+      if (!safe) continue;
+      let matches = [];
+      try {
+        matches = await frame.locator('body').evaluate((body, wantedColumn) => {
+          const norm = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+          const visible = node => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && node.getAttribute('aria-hidden') !== 'true'; };
+          const label = node => (node.getAttribute('aria-label') || node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
+          const fallbackCellSelector = '[role="gridcell"],[role="cell"],.sapMListTblCell,td,.sapUiTableCell';
+          const fallbackRowSelector = '[role="row"],.sapMListTblRow,tr,.sapUiTableTr';
+          const grids = Array.from(body.querySelectorAll('.sapUiTable,.sapMListTbl,[role="grid"],[role="table"],table')).filter(visible);
+          const output = [];
+          for (const grid of grids) {
+            const sapHeaders = Array.from(grid.querySelectorAll('.sapUiTableCol'));
+            const headers = sapHeaders.length ? sapHeaders : Array.from(grid.querySelectorAll('[role="columnheader"],.sapMListTblHeaderCell,th'));
+            const headerMatches = headers.filter(header => visible(header) && (norm(label(header)) === wantedColumn || norm(label(header)).includes(wantedColumn)));
+            if (headerMatches.length !== 1) continue;
+            const header = headerMatches[0];
+            const ariaIndex = Number(header.getAttribute('aria-colindex'));
+            const columnIndex = Number.isInteger(ariaIndex) && ariaIndex > 0 ? ariaIndex - 1 : headers.indexOf(header);
+            if (columnIndex < 0) continue;
+            const sapRows = Array.from(grid.querySelectorAll('.sapUiTableTr'));
+            const rowSelector = sapRows.length ? '.sapUiTableTr' : fallbackRowSelector;
+            const rows = Array.from(grid.querySelectorAll(rowSelector));
+            let selected;
+            for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+              const row = rows[rowIndex];
+              if (!visible(row)) continue;
+              const sapCells = Array.from(row.querySelectorAll('.sapUiTableCell')).filter(cell => cell.closest(rowSelector) === row);
+              const cellSelector = sapCells.length ? '.sapUiTableCell' : fallbackCellSelector;
+              const cells = Array.from(row.querySelectorAll(cellSelector)).filter(cell => cell.closest(rowSelector) === row);
+              const cell = cells[columnIndex];
+              if (!cell || !visible(cell)) continue;
+              const editor = cell.querySelector('input,textarea,select,[contenteditable="true"],[role="textbox"]');
+              const value = editor && 'value' in editor ? String(editor.value || '').trim() : (cell.innerText || cell.textContent || '').replace(/\\s+/g, ' ').trim();
+              if (!value) { selected = { rowIndex, columnIndex, header: label(header) }; break; }
+            }
+            if (!selected) continue;
+            const root = grid.getRootNode();
+            const gridSelector = grid.id && root.querySelectorAll('[id=' + CSS.escape(grid.id) + ']').length === 1
+              ? '[id=' + JSON.stringify(grid.id) + ']'
+              : grid.matches('.sapUiTable') ? '.sapUiTable' : grid.matches('.sapMListTbl') ? '.sapMListTbl' : grid.matches('[role="grid"]') ? '[role="grid"]' : grid.matches('[role="table"]') ? '[role="table"]' : 'table';
+            const gridIndex = Array.from(root.querySelectorAll(gridSelector)).indexOf(grid);
+            const gridKey = String(grid.id || grid.className || grid.tagName) + ':' + gridIndex;
+            const sapCellSelector = '.sapUiTableCell';
+            const firstDataRow = rows[selected.rowIndex];
+            const cellSelector = firstDataRow && firstDataRow.querySelectorAll(sapCellSelector).length ? sapCellSelector : fallbackCellSelector;
+            const expression = 'locator(' + JSON.stringify(gridSelector) + ').nth(' + gridIndex + ').locator(' + JSON.stringify(rowSelector) + ').nth(' + selected.rowIndex + ').locator(' + JSON.stringify(cellSelector) + ').nth(' + selected.columnIndex + ')';
+            output.push({ role: 'gridcell', name: selected.header, tableField: true, tableGridKey: gridKey, tableColumnName: selected.header, tableRowIndex: selected.rowIndex, tableCellValue: '', tableCellExpression: expression, expression });
+          }
+          return output;
+        }, wanted);
+      } catch { continue; }
+      for (const candidate of matches) {
+        const frameScope = frameSelectors.map(segment => segment.ordinal === undefined
+          ? 'frameLocator(' + JSON.stringify(segment.selector) + ')'
+          : 'frameLocator(' + JSON.stringify(segment.selector) + ').nth(' + segment.ordinal + ')').join('.');
+        const expression = frameScope ? frameScope + '.' + candidate.expression : candidate.expression;
+        output.push({ ...candidate, ref: expression, locatorExpression: expression, actionable: true, tableGridKey: (frameScope ? frameScope + '|' : '') + candidate.tableGridKey, tableCellExpression: expression });
+      }
+    }
+    return JSON.stringify(output);
+  }`, { signal, timeoutMs: 12e3 });
+  if (!result.ok || !result.output) return [];
+  return parseEvaluatedDomRows(result.output).flatMap((row) => {
+    const locatorExpression = row.tableCellExpression;
+    if (!row.tableField || !locatorExpression || !row.tableColumnName || !row.tableGridKey || row.tableRowIndex === void 0) return [];
+    return [{
+      ref: locatorExpression,
+      role: row.role ?? "gridcell",
+      name: row.name,
+      actionable: true,
+      locatorExpression,
+      tableField: true,
+      tableGridKey: row.tableGridKey,
+      tableColumnName: row.tableColumnName,
+      tableRowIndex: row.tableRowIndex,
+      tableCellValue: row.tableCellValue ?? "",
+      tableCellExpression: locatorExpression
+    }];
   });
 }
 function parseEvaluatedDomRows(output) {

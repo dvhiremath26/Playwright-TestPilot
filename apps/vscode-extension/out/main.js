@@ -286678,8 +286678,8 @@ async function installPlaywrightMcp(runtimeDirectory, cliPath) {
     });
     const timeout = setTimeout(() => {
       child.kill("SIGTERM");
-      rejectInstall(new Error("Timed out after 60 seconds installing the Playwright MCP fallback package. Check network access to the npm registry, then retry."));
-    }, 6e4);
+      rejectInstall(new Error("Timed out after 20 seconds installing the Playwright MCP fallback package. The CLI continues to handle SAP table steps directly; check npm registry access before relying on MCP fallback."));
+    }, 2e4);
     child.once("error", (error) => {
       clearTimeout(timeout);
       rejectInstall(new Error(`Could not install the Playwright MCP fallback package: ${error.message}`));
@@ -287606,7 +287606,9 @@ async function gatherEvidenceForTestCase(browser, options) {
           isSearchTarget(action.target)
         )[0]?.score ?? 0;
         const tableColumnTarget = action.kind === "fill" ? normalizeTableColumnTarget(action.target) : "";
+        if (tableColumnTarget) options.onStatus?.(`Locating the empty ${tableColumnTarget} cell in the current SAP table.`);
         const directTableTargets = tableColumnTarget ? await inspectSapTableColumnTargets(browser, tableColumnTarget, options.signal) : [];
+        if (tableColumnTarget) options.onStatus?.(directTableTargets.length > 0 ? `Found ${directTableTargets.length} observed ${tableColumnTarget} table cell candidate(s).` : `The Playwright CLI did not expose a matching ${tableColumnTarget} table cell; checking the current page snapshot.`);
         const domElements = tableColumnTarget ? directTableTargets : await inspectVisibleDomTargets(
           browser,
           action.target,
@@ -288386,13 +288388,24 @@ async function inspectSapTableColumnTargets(browser, requestedColumn, signal) {
           const label = node => (node.getAttribute('aria-label') || node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
           const fallbackCellSelector = '[role="gridcell"],[role="cell"],.sapMListTblCell,td,.sapUiTableCell';
           const fallbackRowSelector = '[role="row"],.sapMListTblRow,tr,.sapUiTableTr';
-          const grids = Array.from(body.querySelectorAll('.sapUiTable,.sapMListTbl,[role="grid"],[role="table"],table')).filter(visible);
+          let grids = Array.from(body.querySelectorAll('.sapUiTable,.sapMListTbl,[role="grid"],[role="table"]'))
+            .filter(visible)
+            .filter(grid => !grid.parentElement?.closest('.sapUiTable,.sapMListTbl,[role="grid"],[role="table"]'));
+          // SAP UI5 wraps its header and body in an outer .sapUiTable plus nested
+          // HTML tables. Scanning both levels creates duplicate candidates and
+          // makes the safe single-grid selector reject the Material column.
+          if (grids.length === 0) grids = Array.from(body.querySelectorAll('table')).filter(visible);
           const output = [];
           for (const grid of grids) {
             const sapHeaders = Array.from(grid.querySelectorAll('.sapUiTableCol'));
             const headers = sapHeaders.length ? sapHeaders : Array.from(grid.querySelectorAll('[role="columnheader"],.sapMListTblHeaderCell,th'));
             const headerMatches = headers.filter(header => visible(header) && (norm(label(header)) === wantedColumn || norm(label(header)).includes(wantedColumn)));
-            if (headerMatches.length !== 1) continue;
+            if (headerMatches.length === 0) continue;
+            const logicalHeaderIndexes = new Set(headerMatches.map(header => {
+              const index = Number(header.getAttribute('aria-colindex'));
+              return Number.isInteger(index) && index > 0 ? index - 1 : headers.indexOf(header);
+            }));
+            if (logicalHeaderIndexes.size !== 1) continue;
             const header = headerMatches[0];
             const ariaIndex = Number(header.getAttribute('aria-colindex'));
             const columnIndex = Number.isInteger(ariaIndex) && ariaIndex > 0 ? ariaIndex - 1 : headers.indexOf(header);

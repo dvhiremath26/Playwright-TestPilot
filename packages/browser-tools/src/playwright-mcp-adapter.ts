@@ -617,8 +617,8 @@ async function installPlaywrightMcp(runtimeDirectory: string, cliPath: string): 
     })
     const timeout = setTimeout(() => {
       child.kill('SIGTERM')
-      rejectInstall(new Error('Timed out after 60 seconds installing the Playwright MCP fallback package. Check network access to the npm registry, then retry.'))
-    }, 60_000)
+      rejectInstall(new Error('Timed out after 20 seconds installing the Playwright MCP fallback package. The CLI continues to handle SAP table steps directly; check npm registry access before relying on MCP fallback.'))
+    }, 20_000)
     child.once('error', (error) => {
       clearTimeout(timeout)
       rejectInstall(new Error(`Could not install the Playwright MCP fallback package: ${error.message}`))

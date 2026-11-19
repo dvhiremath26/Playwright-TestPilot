@@ -287283,7 +287283,8 @@ async function gatherEvidenceForTestCase(browser, options) {
     if (opened.detail.startsWith("Navigation failed:")) throw new Error(opened.detail);
     evidence.push(opened);
     await waitForPageReady("Initial navigation");
-    snapshot = await captureScreen("Starting page", currentUrl);
+    const firstAction = options.steps.find((step) => isLocatorAction(step.action));
+    snapshot = await captureScreen("Starting page", currentUrl, firstAction?.action);
   }
   navigation ??= {
     kind: "navigation",
@@ -287415,7 +287416,7 @@ async function gatherEvidenceForTestCase(browser, options) {
           source: browser.provenance ?? navigationSource
         });
         nextStepIndex = stepIndex + 1;
-        snapshot = await captureScreen(`After wait step ${step.order}`, currentUrl);
+        snapshot = await captureScreen(`After wait step ${step.order}`, currentUrl, awaitedStep?.action);
         continue;
       }
       const explicitUrl = extractStepUrl(step.action);
@@ -287434,7 +287435,7 @@ async function gatherEvidenceForTestCase(browser, options) {
           currentUrl = explicitUrl;
           nextStepIndex = stepIndex + 1;
           await waitForPageReady(`Step ${step.order} navigation`);
-          snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl);
+          snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl, options.steps[stepIndex + 1]?.action);
         }
         continue;
       }
@@ -287696,7 +287697,8 @@ async function gatherEvidenceForTestCase(browser, options) {
         }
       }
       if (!sidebarTrialForStep) {
-        snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl);
+        const nextActionStep = options.steps.slice(stepIndex + 1).find((candidate) => isLocatorAction(candidate.action));
+        snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl, nextActionStep?.action);
       }
     }
   } catch (error) {
@@ -287717,11 +287719,29 @@ async function gatherEvidenceForTestCase(browser, options) {
     throw error;
   }
   return { evidence, locatorCandidates };
-  async function captureScreen(label, pageUrl) {
+  async function captureScreen(label, pageUrl, nextStepAction) {
     let observed;
     for (let attempt = 0; attempt < 3 && !observed; attempt++) {
       observed = await browser.capture(void 0, { signal: options.signal, timeoutMs: 2e4 });
       if (!observed && attempt < 2) await new Promise((resolve5) => setTimeout(resolve5, 750));
+    }
+    if (!observed && nextStepAction) {
+      const nextAction = parseReplayAction(nextStepAction);
+      if (nextAction) {
+        const domTargets = await inspectVisibleDomTargets(browser, nextAction.target, options.signal);
+        if (domTargets.length > 0) {
+          observed = {
+            raw: `Live DOM evidence for next step: ${nextStepAction}`,
+            elements: domTargets,
+            capturedAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          evidence.push({
+            kind: "snapshot",
+            detail: `${label}: accessibility snapshot was unavailable; continuing with ${domTargets.length} visible DOM-observed control(s) for the next step "${nextStepAction}".`,
+            source: browser.provenance ?? navigationSource
+          });
+        }
+      }
     }
     if (!observed) {
       const cause = browser.lastBackendFailure ? ` Backend detail: ${browser.lastBackendFailure}` : "";
@@ -288098,12 +288118,13 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
   const searchboxCount = matching.filter((row) => row.role === "searchbox").length;
   return matching.flatMap((row) => {
     const duplicateName = (counts.get(`${row.role ?? ""}\0${row.name}`) ?? 0) !== 1;
-    if (duplicateName && !row.uniqueId) return [];
+    if (duplicateName && !row.uniqueId && !(row.tableField && row.tableCellExpression)) return [];
     const unnamedUniqueSearchbox = isSearchTarget(requestedTarget) && row.role === "searchbox" && !row.name && searchboxCount === 1;
     const useObservedId = duplicateName || row.searchButton || row.tableField || isSearchTarget(requestedTarget) && row.role === "searchbox" && searchboxCount > 1 && row.id && row.uniqueId || includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35;
     const css = row.id ? `[id=${JSON.stringify(row.id)}]` : void 0;
-    const expression = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : useObservedId && css ? `locator(${JSON.stringify(css)})` : unnamedUniqueSearchbox ? `getByRole("searchbox")` : row.role && row.role !== "generic" ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : `getByText(${JSON.stringify(row.name)}, { exact: true })`;
-    const selector = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : useObservedId && css ? `css=${css}` : unnamedUniqueSearchbox ? "role=searchbox" : row.role && row.role !== "generic" ? `role=${row.role}[name=${JSON.stringify(row.name)}]` : `text=${JSON.stringify(row.name)}`;
+    const tableCellRoleLocator = row.tableField && row.tableCellExpression && !row.uniqueId && row.role ? `${row.tableCellExpression}.getByRole(${JSON.stringify(row.role)})` : void 0;
+    const expression = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `locator(${JSON.stringify(css)})` : unnamedUniqueSearchbox ? `getByRole("searchbox")` : row.role && row.role !== "generic" ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : `getByText(${JSON.stringify(row.name)}, { exact: true })`;
+    const selector = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `css=${css}` : unnamedUniqueSearchbox ? "role=searchbox" : row.role && row.role !== "generic" ? `role=${row.role}[name=${JSON.stringify(row.name)}]` : `text=${JSON.stringify(row.name)}`;
     return [{ ref: selector, role: row.role, name: row.name, actionable: true, locatorExpression: expression, context: row.context, navigation: row.navigation, tableField: row.tableField, tableGridKey: row.tableGridKey, tableColumnName: row.tableColumnName, tableRowIndex: row.tableRowIndex, tableCellValue: row.tableCellValue, tableCellExpression: row.tableCellExpression }];
   });
 }
@@ -288203,8 +288224,9 @@ function buildFrameDomTargets(rows, requestedTarget, includeSidebarCandidates) {
     ).join(".");
     const duplicate = (counts.get(`${row.frameSelectors.map((item) => `${item.selector}:${item.ordinal ?? ""}`).join(">")}\0${row.role ?? ""}\0${row.name}`) ?? 0) > 1;
     const useId = Boolean(row.id && row.uniqueId && (row.searchButton || row.tableField || duplicate || isSearchTarget(requestedTarget) && row.role === "searchbox" && !row.uniqueSearchbox));
-    if (duplicate && !useId) return [];
-    const leaf = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : row.helpId && row.uniqueHelpId ? `locator(${JSON.stringify(`[data-help-id=${JSON.stringify(row.helpId)}]`)})` : useId ? `locator(${JSON.stringify(`[id=${JSON.stringify(row.id)}]`)})` : row.role === "searchbox" && !row.name && row.uniqueSearchbox ? `getByRole("searchbox")` : row.role && row.name ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : void 0;
+    if (duplicate && !useId && !(row.tableField && row.tableCellExpression)) return [];
+    const tableCellRoleLocator = row.tableField && row.tableCellExpression && !useId && row.role ? `${row.tableCellExpression}.getByRole(${JSON.stringify(row.role)})` : void 0;
+    const leaf = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : row.helpId && row.uniqueHelpId ? `locator(${JSON.stringify(`[data-help-id=${JSON.stringify(row.helpId)}]`)})` : useId ? `locator(${JSON.stringify(`[id=${JSON.stringify(row.id)}]`)})` : row.role === "searchbox" && !row.name && row.uniqueSearchbox ? `getByRole("searchbox")` : row.role && row.name ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : void 0;
     if (!leaf) return [];
     const expression = `${frameScope}.${leaf}`;
     return [{
@@ -288225,7 +288247,8 @@ function buildFrameDomTargets(rows, requestedTarget, includeSidebarCandidates) {
   });
 }
 function selectNextEmptyTableCell(elements, requestedTarget, cursors) {
-  const wanted = normalizeWords(requestedTarget);
+  const wanted = normalizeWords(requestedTarget).replace(/\b(?:enter|type|fill|input|into|the|column|table|field|textbox|text box)\b/g, " ").replace(/\s+/g, " ").trim();
+  if (!wanted) return void 0;
   const matches = elements.filter(
     (element) => element.tableField && element.locatorExpression && element.tableGridKey && element.tableColumnName && element.tableRowIndex !== void 0 && element.tableCellValue === "" && textMatchScore(normalizeWords(element.tableColumnName), wanted) >= 0.75
   );

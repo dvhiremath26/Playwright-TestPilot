@@ -524,7 +524,8 @@ export async function gatherEvidenceForTestCase(
     if (opened.detail.startsWith('Navigation failed:')) throw new Error(opened.detail)
     evidence.push(opened)
     await waitForPageReady('Initial navigation')
-    snapshot = await captureScreen('Starting page', currentUrl)
+    const firstAction = options.steps.find((step) => isLocatorAction(step.action))
+    snapshot = await captureScreen('Starting page', currentUrl, firstAction?.action)
   }
   navigation ??= {
     kind: 'navigation',
@@ -686,7 +687,7 @@ export async function gatherEvidenceForTestCase(
         source: browser.provenance ?? navigationSource,
       })
       nextStepIndex = stepIndex + 1
-      snapshot = await captureScreen(`After wait step ${step.order}`, currentUrl)
+      snapshot = await captureScreen(`After wait step ${step.order}`, currentUrl, awaitedStep?.action)
       continue
     }
 
@@ -706,7 +707,7 @@ export async function gatherEvidenceForTestCase(
         currentUrl = explicitUrl
         nextStepIndex = stepIndex + 1
         await waitForPageReady(`Step ${step.order} navigation`)
-        snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl)
+        snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl, options.steps[stepIndex + 1]?.action)
       }
       continue
     }
@@ -1028,7 +1029,8 @@ export async function gatherEvidenceForTestCase(
     // Snapshot after every step. The next step's locator candidates therefore
     // come from the screen that is actually visible at that point in the flow.
     if (!sidebarTrialForStep) {
-      snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl)
+      const nextActionStep = options.steps.slice(stepIndex + 1).find((candidate) => isLocatorAction(candidate.action))
+      snapshot = await captureScreen(`After step ${step.order}: ${step.action}`, currentUrl, nextActionStep?.action)
     }
   }
   } catch (error) {
@@ -1051,11 +1053,32 @@ export async function gatherEvidenceForTestCase(
 
   return { evidence, locatorCandidates }
 
-  async function captureScreen(label: string, pageUrl: string) {
+  async function captureScreen(label: string, pageUrl: string, nextStepAction?: string) {
     let observed: BrowserSnapshot | undefined
     for (let attempt = 0; attempt < 3 && !observed; attempt++) {
       observed = await browser.capture(undefined, { signal: options.signal, timeoutMs: 20_000 })
       if (!observed && attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750))
+    }
+    if (!observed && nextStepAction) {
+      const nextAction = parseReplayAction(nextStepAction)
+      if (nextAction) {
+        // Some SAP UI5 tables make the CLI accessibility snapshot fail even
+        // though their editable cells are present in the live DOM. Prefer those
+        // observed controls over starting MCP from scratch at a table step.
+        const domTargets = await inspectVisibleDomTargets(browser, nextAction.target, options.signal)
+        if (domTargets.length > 0) {
+          observed = {
+            raw: `Live DOM evidence for next step: ${nextStepAction}`,
+            elements: domTargets,
+            capturedAt: new Date().toISOString(),
+          }
+          evidence.push({
+            kind: 'snapshot',
+            detail: `${label}: accessibility snapshot was unavailable; continuing with ${domTargets.length} visible DOM-observed control(s) for the next step "${nextStepAction}".`,
+            source: browser.provenance ?? navigationSource,
+          })
+        }
+      }
     }
     if (!observed) {
       const cause = browser.lastBackendFailure ? ` Backend detail: ${browser.lastBackendFailure}` : ''
@@ -1482,14 +1505,19 @@ async function inspectVisibleDomTargets(
     const duplicateName = (counts.get(`${row.role ?? ''}\u0000${row.name}`) ?? 0) !== 1
     // Use the observed element id to distinguish repeated Fiori controls. Without
     // a unique id, identical role/name matches remain ambiguous and are excluded.
-    if (duplicateName && !row.uniqueId) return []
+    if (duplicateName && !row.uniqueId && !(row.tableField && row.tableCellExpression)) return []
     const unnamedUniqueSearchbox = isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.name && searchboxCount === 1
     const useObservedId = duplicateName || row.searchButton || row.tableField ||
       (isSearchTarget(requestedTarget) && row.role === 'searchbox' && searchboxCount > 1 && row.id && row.uniqueId) ||
       (includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35)
     const css = row.id ? `[id=${JSON.stringify(row.id)}]` : undefined
+    const tableCellRoleLocator = row.tableField && row.tableCellExpression && !row.uniqueId && row.role
+      ? `${row.tableCellExpression}.getByRole(${JSON.stringify(row.role)})`
+      : undefined
     const expression = row.role === 'gridcell' && row.tableCellExpression
       ? row.tableCellExpression
+      : tableCellRoleLocator
+      ? tableCellRoleLocator
       : useObservedId && css
       ? `locator(${JSON.stringify(css)})`
       : unnamedUniqueSearchbox
@@ -1499,6 +1527,8 @@ async function inspectVisibleDomTargets(
       : `getByText(${JSON.stringify(row.name)}, { exact: true })`
     const selector = row.role === 'gridcell' && row.tableCellExpression
       ? row.tableCellExpression
+      : tableCellRoleLocator
+      ? tableCellRoleLocator
       : useObservedId && css
       ? `css=${css}`
       : unnamedUniqueSearchbox
@@ -1642,9 +1672,14 @@ function buildFrameDomTargets(
     ).join('.')
     const duplicate = (counts.get(`${row.frameSelectors.map((item) => `${item.selector}:${item.ordinal ?? ''}`).join('>')}\u0000${row.role ?? ''}\u0000${row.name}`) ?? 0) > 1
     const useId = Boolean(row.id && row.uniqueId && (row.searchButton || row.tableField || duplicate || (isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.uniqueSearchbox)))
-    if (duplicate && !useId) return []
+    if (duplicate && !useId && !(row.tableField && row.tableCellExpression)) return []
+    const tableCellRoleLocator = row.tableField && row.tableCellExpression && !useId && row.role
+      ? `${row.tableCellExpression}.getByRole(${JSON.stringify(row.role)})`
+      : undefined
     const leaf = row.role === 'gridcell' && row.tableCellExpression
       ? row.tableCellExpression
+      : tableCellRoleLocator
+      ? tableCellRoleLocator
       : row.helpId && row.uniqueHelpId
       ? `locator(${JSON.stringify(`[data-help-id=${JSON.stringify(row.helpId)}]`)})`
       : useId
@@ -1685,6 +1720,10 @@ function selectNextEmptyTableCell(
   cursors: Map<string, { rowIndex: number; columnName: string }>,
 ): BrowserElementRef | undefined {
   const wanted = normalizeWords(requestedTarget)
+    .replace(/\b(?:enter|type|fill|input|into|the|column|table|field|textbox|text box)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!wanted) return undefined
   const matches = elements.filter((element) =>
     element.tableField && element.locatorExpression && element.tableGridKey &&
     element.tableColumnName && element.tableRowIndex !== undefined &&

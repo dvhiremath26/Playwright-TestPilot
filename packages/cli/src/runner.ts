@@ -903,7 +903,22 @@ export async function gatherEvidenceForTestCase(
             preActionSnapshot = snapshot
           }
           if (!editor) {
-            result = { ...activated, ok: false, error: `The ${target.tableColumnName ?? 'table'} cell was opened, but SAP did not expose an editable control in row ${Number(target.tableRowIndex) + 1}.` }
+            // Some SAP GUI/Fiori grids create the input editor inside the clicked
+            // cell without exposing it in the accessibility tree. The cell locator
+            // came from the live DOM inspection above, so try its scoped editor
+            // before treating the table step as unresolved.
+            const cellExpression = target.tableCellExpression
+            if (cellExpression && browser.runCode) {
+              const directFill = await browser.runCode(
+                `async page => { const cell = ${cellExpression}; const editor = cell.locator('input,textarea,select,[contenteditable="true"],[role="textbox"]').first(); await editor.waitFor({ state: 'visible', timeout: 1800 }); await editor.fill(${JSON.stringify(action.value)}); return 'Filled the observed ${target.tableColumnName ?? 'table'} cell'; }`,
+                { signal: options.signal, timeoutMs: 3_000 },
+              )
+              result = directFill.ok
+                ? directFill
+                : { ...activated, ok: false, error: directFill.error ?? `The ${target.tableColumnName ?? 'table'} cell was opened, but SAP did not expose an editable control in row ${Number(target.tableRowIndex) + 1}.` }
+            } else {
+              result = { ...activated, ok: false, error: `The ${target.tableColumnName ?? 'table'} cell was opened, but SAP did not expose an editable control in row ${Number(target.tableRowIndex) + 1}.` }
+            }
           } else {
             target = editor
             result = await executeActionTarget(editor)
@@ -1364,7 +1379,15 @@ async function inspectVisibleDomTargets(
             const ariaColumn = Number(gridCell.getAttribute('aria-colindex'));
             const siblingCells = Array.from(gridCell.parentElement?.children || []).filter(node => node.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
             const columnIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
-            const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableColCell,.sapUiTableColHdr,.sapUiTableCol,.sapMListTblHeaderCell'));
+            // SAP UI5 renders nested wrappers for each header; counting every wrapper
+            // shifts the header-to-cell mapping and can target the wrong table column.
+            const headerCandidates = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableColCell,.sapMListTblHeaderCell'));
+            const headers = headerCandidates.filter(node => {
+              const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
+              const text = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
+              const nestedDuplicate = headerCandidates.some(other => other !== node && node.contains(other) && text && text === (other.innerText || other.textContent || '').replace(/\\s+/g, ' ').trim());
+              return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && !nestedDuplicate;
+            });
             const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
             tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
             if (gridRow) {
@@ -1386,7 +1409,7 @@ async function inspectVisibleDomTargets(
             ? 'locator(' + JSON.stringify(gridSelector) + ').nth(' + gridOrdinal + ').locator(' + JSON.stringify(rowSelector) + ').nth(' + tableRowIndex + ').locator(' + JSON.stringify(cellSelector) + ').nth(' + tableCellIndex + ')'
             : '';
           const nestedEditor = gridCell?.querySelector('input,textarea,select,[contenteditable="true"]');
-          const tableCellValue = typeof el.value === 'string' ? el.value : nestedEditor && typeof nestedEditor.value === 'string' ? nestedEditor.value : isTableCell ? (el.innerText || el.textContent || '') : el.isContentEditable ? (el.innerText || el.textContent || '') : '';
+          const tableCellValue = (typeof el.value === 'string' ? el.value : nestedEditor && typeof nestedEditor.value === 'string' ? nestedEditor.value : isTableCell ? (el.innerText || el.textContent || '') : el.isContentEditable ? (el.innerText || el.textContent || '') : '').replace(/\\s+/g, ' ').trim();
           const context = [tableColumn, el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || ''), controlType].filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 180);
           return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), helpId, uniqueHelpId: Boolean(helpId && helpIdCounts.get(helpId) === 1), searchButton, tableField: Boolean(tableColumn && (role === 'textbox' || role === 'combobox' || role === 'gridcell')), tableGridKey, tableColumnName: tableColumn, tableRowIndex, tableCellValue, tableCellExpression, context, navigation: Boolean(nav) };
         });
@@ -1460,7 +1483,14 @@ async function inspectVisibleDomTargets(
           const ariaColumn = Number(gridCell.getAttribute('aria-colindex'));
           const siblingCells = Array.from(gridCell.parentElement?.children || []).filter(node => node.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
           const columnIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
-          const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableColCell,.sapUiTableColHdr,.sapUiTableCol,.sapMListTblHeaderCell'));
+          // Keep SAP's column mapping one-to-one even when header wrappers are nested.
+          const headerCandidates = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableColCell,.sapMListTblHeaderCell'));
+          const headers = headerCandidates.filter(node => {
+            const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
+            const text = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
+            const nestedDuplicate = headerCandidates.some(other => other !== node && node.contains(other) && text && text === (other.innerText || other.textContent || '').replace(/\\s+/g, ' ').trim());
+            return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && !nestedDuplicate;
+          });
           const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
           tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
           if (gridRow) {
@@ -1480,7 +1510,7 @@ async function inspectVisibleDomTargets(
           ? 'locator(' + JSON.stringify(gridSelector) + ').nth(' + gridOrdinal + ').locator(' + JSON.stringify(rowSelector) + ').nth(' + tableRowIndex + ').locator(' + JSON.stringify(cellSelector) + ').nth(' + tableCellIndex + ')'
           : '';
         const nestedEditor = gridCell?.querySelector('input,textarea,select,[contenteditable="true"]');
-        const tableCellValue = typeof el.value === 'string' ? el.value : nestedEditor && typeof nestedEditor.value === 'string' ? nestedEditor.value : isTableCell ? (el.innerText || el.textContent || '') : el.isContentEditable ? (el.innerText || el.textContent || '') : '';
+        const tableCellValue = (typeof el.value === 'string' ? el.value : nestedEditor && typeof nestedEditor.value === 'string' ? nestedEditor.value : isTableCell ? (el.innerText || el.textContent || '') : el.isContentEditable ? (el.innerText || el.textContent || '') : '').replace(/\\s+/g, ' ').trim();
         const parentTexts = [el.parentElement, el.parentElement && el.parentElement.parentElement].filter(Boolean).map((parent) => (parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean);
         const context = [...new Set([tableColumn, parentTexts[0], parentTexts[1], controlType].filter(Boolean))].join(' | ').slice(0, 180);
         return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), searchButton, tableField: Boolean(tableColumn && (role === 'textbox' || role === 'combobox' || role === 'gridcell')), tableGridKey, tableColumnName: tableColumn, tableRowIndex, tableCellValue, tableCellExpression, context, navigation: Boolean(nav) };

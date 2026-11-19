@@ -60,6 +60,8 @@ export interface PlaywrightMcpAdapterOptions {
   cwd?: string
   /** Install directory for a direct Node launch of @playwright/mcp (avoids Windows npx stdio hangs). */
   runtimeDirectory?: string
+  /** Surface one-time fallback setup progress to the extension UI. */
+  onStatus?: (message: string) => void
   env?: Record<string, string>
 }
 
@@ -462,6 +464,7 @@ export class PlaywrightMcpAdapter implements BrowserTool {
         ...(this.opts.allowedHosts?.length ? ['--allowed-hosts', this.opts.allowedHosts.join(',')] : []),
       ]
     if (this.opts.runtimeDirectory) {
+      this.opts.onStatus?.('Playwright CLI could not handle the current screen. Preparing the Playwright MCP fallback now; the browser will stay on the current page.')
       const mcpCli = await ensurePlaywrightMcpCli(this.opts.runtimeDirectory)
       command = findNodeExecutable()
       // Spawn node.exe directly with stdio pipes. On Windows, cmd.exe -> npx.cmd
@@ -614,8 +617,8 @@ async function installPlaywrightMcp(runtimeDirectory: string, cliPath: string): 
     })
     const timeout = setTimeout(() => {
       child.kill('SIGTERM')
-      rejectInstall(new Error('Timed out after 180 seconds installing the Playwright MCP fallback package.'))
-    }, 180_000)
+      rejectInstall(new Error('Timed out after 60 seconds installing the Playwright MCP fallback package. Check network access to the npm registry, then retry.'))
+    }, 60_000)
     child.once('error', (error) => {
       clearTimeout(timeout)
       rejectInstall(new Error(`Could not install the Playwright MCP fallback package: ${error.message}`))

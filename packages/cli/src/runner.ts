@@ -804,6 +804,14 @@ export async function gatherEvidenceForTestCase(
         : undefined
       if (tableCellTarget) compatibleTargets = [tableCellTarget]
       else if (snapshotTableSelection) compatibleTargets = [snapshotTableSelection.element]
+      else if (action.kind === 'fill' && normalizeTableColumnTarget(action.target)) {
+        // Do not ask the model to guess from unrelated form controls when the
+        // requested table column was not observed. Let the active backend's
+        // fallback snapshot inspect this same screen instead.
+        throw new SnapshotTargetUnavailableError(
+          `Step ${step.order} targets the ${normalizeTableColumnTarget(action.target)} table column, but no matching empty cell was exposed by the live DOM or current snapshot.`,
+        )
+      }
       // Enterprise apps often finish an SSO redirect or client-side menu render
       // shortly after the click command returns. Give the current page a brief,
       // bounded chance to expose the next screen before declaring that its
@@ -1302,11 +1310,16 @@ async function inspectVisibleDomTargets(
   signal?: AbortSignal,
   includeSidebarCandidates = false,
 ): Promise<BrowserElementRef[]> {
+  const tableColumnTarget = normalizeTableColumnTarget(requestedTarget)
+  const tableOnlySelector = 'input,textarea,select,[contenteditable="true"],[role="textbox"],[role="combobox"],[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'
+  const broadSelector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell,[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-input,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSFF,.sapMSF,.sapMSearchField'
+  const domSelector = tableColumnTarget ? tableOnlySelector : broadSelector
   // Playwright CLI can inspect cross-origin frames through Playwright's Frame API.
   // The old page.evaluate path below is limited to the main document and would miss
   // the common SAP/Fiori case where the shell is visible but the active form is framed.
   const frameInspection = await browser.runCode(`async page => {
-    const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell,[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-input,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSFF,.sapMSF,.sapMSearchField';
+    const selector = ${JSON.stringify(domSelector)};
+    const wantedTableColumn = ${JSON.stringify(tableColumnTarget)};
     const results = [];
     const frames = page.frames();
     for (const frame of frames.slice(1, 41)) {
@@ -1364,7 +1377,7 @@ async function inspectVisibleDomTargets(
           const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : (el.getAttribute('type') || '').toLowerCase();
           const searchField = inputType === 'search' || /sapMSFI|sapMSFF|sapMSF|sapMSearchField|ui5-search/i.test(classes + ' ' + tag) || Boolean(el.closest('.sapMSF,.sapMSearchField,ui5-search,[data-search-field="true"]'));
           const isTableCell = Boolean(el.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
-          const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' || tag === 'ui5-input' ? 'textbox' : el.isContentEditable ? 'textbox' : isTableCell ? 'gridcell' : 'generic');
+          const role = isTableCell && (!explicitRole || /^(?:none|presentation)$/i.test(explicitRole)) ? 'gridcell' : explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' || tag === 'ui5-input' ? 'textbox' : el.isContentEditable ? 'textbox' : isTableCell ? 'gridcell' : 'generic');
           const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
           const control = core && el.id ? core.byId(el.id) : undefined;
           const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
@@ -1396,6 +1409,26 @@ async function inspectVisibleDomTargets(
             const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
             const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
             tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
+            if (wantedTableColumn) {
+              const labelOf = node => (node.getAttribute('aria-label') || node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
+              const normalized = value => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+              let headerSet = headers;
+              let matches = headerSet.filter(node => normalized(labelOf(node)) === wantedTableColumn || normalized(labelOf(node)).includes(wantedTableColumn));
+              if (matches.length !== 1) {
+                const root = grid.getRootNode() || grid.ownerDocument;
+                headerSet = Array.from(root.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
+                matches = headerSet.filter(node => normalized(labelOf(node)) === wantedTableColumn || normalized(labelOf(node)).includes(wantedTableColumn));
+              }
+              if (matches.length === 1) {
+                const matchedHeader = matches[0];
+                const headerAriaIndex = Number(matchedHeader.getAttribute('aria-colindex'));
+                const matchedIndex = Number.isInteger(headerAriaIndex) && headerAriaIndex > 0
+                  ? headerAriaIndex - 1
+                  : headerSet === headers ? headerSet.indexOf(matchedHeader) : -1;
+                const actualCellIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
+                tableColumn = matchedIndex === actualCellIndex ? labelOf(matchedHeader) : '';
+              }
+            }
             if (gridRow) {
               const rows = Array.from(grid.querySelectorAll(rowSelector));
               tableRowIndex = rows.indexOf(gridRow);
@@ -1421,12 +1454,18 @@ async function inspectVisibleDomTargets(
         });
       }, selector); } catch { continue; }
       const searchboxes = rows.filter(row => row.role === 'searchbox').length;
-      for (const row of rows) {
+      const matchingTableRows = wantedTableColumn
+        ? rows.filter(row => row.tableField && row.tableColumnName && row.tableColumnName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().includes(wantedTableColumn))
+        : [];
+      for (const row of matchingTableRows.length > 0 ? matchingTableRows : rows) {
         if (!row.name && !(row.role === 'searchbox' && searchboxes === 1) && !row.uniqueHelpId && !(row.searchButton && row.uniqueId)) continue;
         results.push({ ...row, frameSelectors, uniqueSearchbox: row.role === 'searchbox' && searchboxes === 1 });
       }
     }
-    return JSON.stringify(results.slice(0, 240));
+    const tableMatches = wantedTableColumn
+      ? results.filter(row => row.tableField && row.tableColumnName && row.tableColumnName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().includes(wantedTableColumn))
+      : [];
+    return JSON.stringify((tableMatches.length > 0 ? tableMatches : results).slice(0, 240));
   }`, { signal, timeoutMs: 12_000 })
   if (frameInspection.ok && frameInspection.output) {
     const rows = parseEvaluatedFrameDomRows(frameInspection.output)
@@ -1436,7 +1475,8 @@ async function inspectVisibleDomTargets(
 
   const inspected = await browser.execute(
     (tool, callOptions) => tool.eval(`() => {
-      const selector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell,[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-input,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSFF,.sapMSF,.sapMSearchField';
+      const selector = ${JSON.stringify(domSelector)};
+      const wantedTableColumn = ${JSON.stringify(tableColumnTarget)};
       const allowUnnamedSearch = ${isSearchTarget(requestedTarget)};
       const roots = [document];
       for (let index = 0; index < roots.length && index < 40; index++) {
@@ -1449,7 +1489,7 @@ async function inspectVisibleDomTargets(
         for (const node of root.querySelectorAll('[id]')) idCounts.set(node.id, (idCounts.get(node.id) || 0) + 1);
       }
       const seen = new Set();
-      return roots.flatMap((root) => Array.from(root.querySelectorAll(selector))).filter((el) => {
+      const collected = roots.flatMap((root) => Array.from(root.querySelectorAll(selector))).filter((el) => {
         if (seen.has(el)) return false;
         seen.add(el);
         const rect = el.getBoundingClientRect();
@@ -1462,7 +1502,7 @@ async function inspectVisibleDomTargets(
         const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : (el.getAttribute('type') || '').toLowerCase();
         const searchField = inputType === 'search' || /sapMSFI|sapMSFF|sapMSF|sapMSearchField|ui5-search/i.test(classes + ' ' + tag) || Boolean(el.closest('.sapMSF,.sapMSearchField,ui5-search,[data-search-field="true"]'));
         const isTableCell = Boolean(el.matches('[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell'));
-        const role = explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' || tag === 'ui5-input' ? 'textbox' : el.isContentEditable ? 'textbox' : isTableCell ? 'gridcell' : 'generic');
+        const role = isTableCell && (!explicitRole || /^(?:none|presentation)$/i.test(explicitRole)) ? 'gridcell' : explicitRole || (tag === 'a' || /sapMLnk|sapTntNavLIItem/.test(classes) ? 'link' : tag === 'button' || tag === 'ui5-button' || /sapMBtn/.test(classes) ? 'button' : tag === 'ui5-search' || inputType === 'search' || /sapMSFI/.test(classes) ? 'searchbox' : tag === 'select' ? 'combobox' : tag === 'textarea' || tag === 'input' || tag === 'ui5-input' ? 'textbox' : el.isContentEditable ? 'textbox' : isTableCell ? 'gridcell' : 'generic');
         const core = window.sap && window.sap.ui && window.sap.ui.getCore ? window.sap.ui.getCore() : undefined;
         const control = core && el.id ? core.byId(el.id) : undefined;
         const controlType = control && control.getMetadata && control.getMetadata().getName ? control.getMetadata().getName() : '';
@@ -1493,6 +1533,26 @@ async function inspectVisibleDomTargets(
           const headers = Array.from(grid.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
           const header = (ariaColumn > 0 ? headers.find(node => Number(node.getAttribute('aria-colindex')) === ariaColumn) : undefined) || headers[columnIndex];
           tableColumn = (header?.getAttribute('aria-label') || header?.innerText || header?.textContent || '').replace(/\\s+/g, ' ').trim();
+          if (wantedTableColumn) {
+            const labelOf = node => (node.getAttribute('aria-label') || node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
+            const normalized = value => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            let headerSet = headers;
+            let matches = headerSet.filter(node => normalized(labelOf(node)) === wantedTableColumn || normalized(labelOf(node)).includes(wantedTableColumn));
+            if (matches.length !== 1) {
+              const root = grid.getRootNode() || grid.ownerDocument;
+              headerSet = Array.from(root.querySelectorAll('[role="columnheader"],th,.sapUiTableCol,.sapMListTblHeaderCell'));
+              matches = headerSet.filter(node => normalized(labelOf(node)) === wantedTableColumn || normalized(labelOf(node)).includes(wantedTableColumn));
+            }
+            if (matches.length === 1) {
+              const matchedHeader = matches[0];
+              const headerAriaIndex = Number(matchedHeader.getAttribute('aria-colindex'));
+              const matchedIndex = Number.isInteger(headerAriaIndex) && headerAriaIndex > 0
+                ? headerAriaIndex - 1
+                : headerSet === headers ? headerSet.indexOf(matchedHeader) : -1;
+              const actualCellIndex = Number.isInteger(ariaColumn) && ariaColumn > 0 ? ariaColumn - 1 : siblingCells.indexOf(gridCell);
+              tableColumn = matchedIndex === actualCellIndex ? labelOf(matchedHeader) : '';
+            }
+          }
           if (gridRow) {
             const rows = Array.from(grid.querySelectorAll(rowSelector));
             tableRowIndex = rows.indexOf(gridRow);
@@ -1514,7 +1574,11 @@ async function inspectVisibleDomTargets(
         const parentTexts = [el.parentElement, el.parentElement && el.parentElement.parentElement].filter(Boolean).map((parent) => (parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean);
         const context = [...new Set([tableColumn, parentTexts[0], parentTexts[1], controlType].filter(Boolean))].join(' | ').slice(0, 180);
         return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), searchButton, tableField: Boolean(tableColumn && (role === 'textbox' || role === 'combobox' || role === 'gridcell')), tableGridKey, tableColumnName: tableColumn, tableRowIndex, tableCellValue, tableCellExpression, context, navigation: Boolean(nav) };
-      }).filter((item) => (item.name && (item.name.length > 1 || item.navigation)) || (allowUnnamedSearch && item.role === 'searchbox') || (allowUnnamedSearch && item.searchButton && item.uniqueId)).slice(0, 160);
+      }).filter((item) => (item.name && (item.name.length > 1 || item.navigation)) || (allowUnnamedSearch && item.role === 'searchbox') || (allowUnnamedSearch && item.searchButton && item.uniqueId));
+      const tableMatches = wantedTableColumn
+        ? collected.filter(item => item.tableField && item.tableColumnName && item.tableColumnName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().includes(wantedTableColumn))
+        : [];
+      return JSON.stringify((tableMatches.length > 0 ? tableMatches : collected).slice(0, 160));
     }`, undefined, callOptions),
     { signal },
   )
@@ -1522,11 +1586,13 @@ async function inspectVisibleDomTargets(
 
   const rows = parseEvaluatedDomRows(inspected.output)
   const wanted = normalizeWords(requestedTarget)
+  const wantedTableColumn = normalizeTableColumnTarget(requestedTarget)
   const matching = rows
     .map((row) => ({
       ...row,
       score: isSearchTarget(requestedTarget) && row.role === 'searchbox' && !row.name ? 0.9 : Math.max(
         textMatchScore(normalizeWords(row.name), wanted),
+        wantedTableColumn ? textMatchScore(normalizeWords(row.tableColumnName ?? ''), wantedTableColumn) : 0,
         textMatchScore(normalizeWords(row.context ?? ''), wanted) * 0.85,
       ),
     }))
@@ -1684,6 +1750,7 @@ function buildFrameDomTargets(
   includeSidebarCandidates: boolean,
 ): BrowserElementRef[] {
   const wanted = normalizeWords(requestedTarget)
+  const wantedTableColumn = normalizeTableColumnTarget(requestedTarget)
   const ranked = rows.map((row) => ({
     ...row,
     score: isSearchTarget(requestedTarget) && row.role === 'searchbox' && row.uniqueSearchbox
@@ -1692,6 +1759,7 @@ function buildFrameDomTargets(
       ? 0.9
       : Math.max(
           textMatchScore(normalizeWords(row.name), wanted),
+          wantedTableColumn ? textMatchScore(normalizeWords(row.tableColumnName ?? ''), wantedTableColumn) : 0,
           textMatchScore(normalizeWords(row.context ?? ''), wanted) * 0.85,
         ),
   })).filter((row) =>
@@ -1785,6 +1853,14 @@ function selectNextEmptyTableCell(
   if (sameColumn) return rows.find((element) => element.tableRowIndex! > cursor.rowIndex)
   return rows.find((element) => element.tableRowIndex === cursor.rowIndex) ??
     rows.find((element) => element.tableRowIndex! > cursor.rowIndex)
+}
+
+function normalizeTableColumnTarget(value: string): string {
+  if (!/\b(?:column|table)\b/i.test(value)) return ''
+  return normalizeWords(value)
+    .replace(/\b(?:enter|type|fill|input|into|column|table|field|textbox|text box|the)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 interface SnapshotTableCursor {

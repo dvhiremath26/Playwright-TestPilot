@@ -95,6 +95,10 @@ export interface VerifiedLocator {
   stepOrder?: number
   /** URL of the screen where this locator was observed. */
   pageUrl?: string
+  /** Sanitized, bounded DOM context observed around the control. */
+  context?: string
+  /** Sanitized element markup attributes observed for this locator candidate. */
+  domHint?: string
 }
 
 /** A decision about what to do with the test case as a whole. */

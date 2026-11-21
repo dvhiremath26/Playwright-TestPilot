@@ -64,6 +64,8 @@ export interface BrowserElementRef {
   locatorExpression?: string
   /** Nearby DOM/SAPUI5 context that helps distinguish repeated navigation controls. */
   context?: string
+  /** Small attribute-only DOM fragment; form values and page text are excluded. */
+  domHint?: string
   /** True only when the visible element is nested in an observed navigation container. */
   navigation?: boolean
   /** DOM-observed SAP/web-grid metadata used to route repeated edits to the right row. */

@@ -287595,6 +287595,16 @@ async function gatherEvidenceForTestCase(browser, options) {
           detail: observed.length > 0 ? `Step ${step.order} assertion locator candidates were generated from matching visible text in the post-action snapshot.` : `Step ${step.order} assertion has no matching visible text/ref in the current snapshot; no locator was inferred.`,
           source: browser.provenance ?? navigationSource
         });
+      } else if (!action && isDataExtractionStep(step.action)) {
+        const extractionTarget = dataExtractionTarget(step.action);
+        const matchedElements = extractionTarget ? rankDataExtractionElements(snapshot, extractionTarget) : [];
+        const observed = await candidatesForStep(snapshot, step.order, step.action, currentUrl, matchedElements);
+        locatorCandidates.push(...observed);
+        evidence.push({
+          kind: "snapshot",
+          detail: observed.length > 0 ? `Step ${step.order} captured ${observed.length} visible result locator candidate(s) for '${extractionTarget}'.` : `Step ${step.order} requests data extraction for '${extractionTarget ?? step.action}', but no matching result locator was exposed in the current snapshot.`,
+          source: browser.provenance ?? navigationSource
+        });
       } else if (!action && isLocatorAction(step.action)) {
         throw new Error(`Step ${step.order} could not be replayed safely: unsupported browser action "${step.action}". No later screen evidence was collected.`);
       }
@@ -288036,7 +288046,9 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
           backend: browser.provenance?.backendLabel ?? "browser DOM inspection",
           observedAt: observed.capturedAt,
           stepOrder,
-          pageUrl
+          pageUrl,
+          context: element.context,
+          domHint: element.domHint
         });
         continue;
       }
@@ -288052,7 +288064,9 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
         backend: generated.provenance.backendLabel,
         observedAt: observed.capturedAt,
         stepOrder,
-        pageUrl
+        pageUrl,
+        context: element.context,
+        domHint: element.domHint
       });
     }
     return candidates;
@@ -288109,6 +288123,12 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
         for (const root of roots) for (const node of root.querySelectorAll('[id]')) idCounts.set(node.id, (idCounts.get(node.id) || 0) + 1);
         const helpIdCounts = new Map();
         for (const root of roots) for (const node of root.querySelectorAll('[data-help-id]')) { const value = node.getAttribute('data-help-id'); if (value) helpIdCounts.set(value, (helpIdCounts.get(value) || 0) + 1); }
+        const identityAttributes = ['data-testid','data-test','data-qa','data-cy','data-automation-id','data-help-id','name','id'];
+        const identityCounts = new Map();
+        for (const root of roots) for (const node of root.querySelectorAll('*')) for (const attribute of identityAttributes) {
+          const value = node.getAttribute(attribute);
+          if (value) { const key = attribute + String.fromCharCode(0) + value; identityCounts.set(key, (identityCounts.get(key) || 0) + 1); }
+        }
         const seen = new Set();
         return nodes.filter(el => {
           if (seen.has(el)) return false;
@@ -288180,10 +288200,24 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
               tableRowIndex = rows.indexOf(gridRow);
             }
           }
-          const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || tableColumn || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
           const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
           const id = el.id || '';
           const helpId = el.getAttribute('data-help-id') || '';
+          const stableIdentity = identityAttributes.map(attribute => ({ attribute, value: el.getAttribute(attribute) || '' }))
+            .find(item => item.value && identityCounts.get(item.attribute + String.fromCharCode(0) + item.value) === 1);
+          const stableLocatorExpression = stableIdentity
+            ? stableIdentity.attribute === 'data-testid'
+              ? 'getByTestId(' + JSON.stringify(stableIdentity.value) + ')'
+              : 'locator(' + JSON.stringify('[' + stableIdentity.attribute + '=' + JSON.stringify(stableIdentity.value) + ']') + ')'
+            : '';
+          const stableSelector = stableIdentity ? '[' + stableIdentity.attribute + '=' + JSON.stringify(stableIdentity.value) + ']' : '';
+          const stableName = stableIdentity?.value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ') || '';
+          const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || tableColumn || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || stableName).replace(/\\s+/g, ' ').trim();
+          const hintAttributes = ['role','type','name','placeholder','aria-label','aria-labelledby','title','data-testid','data-test','data-qa','data-cy','data-help-id','id'];
+          const domHint = '<' + tag + hintAttributes.map(attribute => {
+            const value = el.getAttribute(attribute);
+            return value ? ' ' + attribute + '=' + JSON.stringify(value) : '';
+          }).join('') + '>';
           const gridClass = typeof grid?.className === 'string' ? grid.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
           const gridSelector = grid?.id && idCounts.get(grid.id) === 1 ? '[id=' + JSON.stringify(grid.id) + ']' : grid?.matches('.sapUiTable') ? '.sapUiTable' : grid?.matches('.sapMListTbl') ? '.sapMListTbl' : grid?.matches('[role="grid"]') ? '[role="grid"]' : grid?.matches('[role="table"]') ? '[role="table"]' : 'table';
           const gridRoot = grid?.getRootNode() || grid?.ownerDocument;
@@ -288196,7 +288230,7 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const nestedEditor = gridCell?.querySelector('input,textarea,select,[contenteditable="true"]');
           const tableCellValue = (typeof el.value === 'string' ? el.value : nestedEditor && typeof nestedEditor.value === 'string' ? nestedEditor.value : isTableCell ? (el.innerText || el.textContent || '') : el.isContentEditable ? (el.innerText || el.textContent || '') : '').replace(/\\s+/g, ' ').trim();
           const context = [tableColumn, el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || ''), controlType].filter(Boolean).join(' | ').replace(/\\s+/g, ' ').trim().slice(0, 180);
-          return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), helpId, uniqueHelpId: Boolean(helpId && helpIdCounts.get(helpId) === 1), searchButton, tableField: Boolean(tableColumn && (role === 'textbox' || role === 'combobox' || role === 'gridcell')), tableGridKey, tableColumnName: tableColumn, tableRowIndex, tableCellValue, tableCellExpression, context, navigation: Boolean(nav) };
+          return { role, name, id, uniqueId: Boolean(id && idCounts.get(id) === 1), helpId, uniqueHelpId: Boolean(helpId && helpIdCounts.get(helpId) === 1), stableLocatorExpression, stableSelector, domHint, searchButton, tableField: Boolean(tableColumn && (role === 'textbox' || role === 'combobox' || role === 'gridcell')), tableGridKey, tableColumnName: tableColumn, tableRowIndex, tableCellValue, tableCellExpression, context, navigation: Boolean(nav) };
         });
       }, selector); } catch { continue; }
       const searchboxes = rows.filter(row => row.role === 'searchbox').length;
@@ -288204,7 +288238,7 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
         ? rows.filter(row => row.tableField && row.tableColumnName && row.tableColumnName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().includes(wantedTableColumn))
         : [];
       for (const row of matchingTableRows.length > 0 ? matchingTableRows : rows) {
-        if (!row.name && !(row.role === 'searchbox' && searchboxes === 1) && !row.uniqueHelpId && !(row.searchButton && row.uniqueId)) continue;
+        if (!row.name && !row.stableLocatorExpression && !(row.role === 'searchbox' && searchboxes === 1) && !row.uniqueHelpId && !(row.searchButton && row.uniqueId)) continue;
         results.push({ ...row, frameSelectors, uniqueSearchbox: row.role === 'searchbox' && searchboxes === 1 });
       }
     }
@@ -288232,6 +288266,12 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
       const idCounts = new Map();
       for (const root of roots) {
         for (const node of root.querySelectorAll('[id]')) idCounts.set(node.id, (idCounts.get(node.id) || 0) + 1);
+      }
+      const identityAttributes = ['data-testid','data-test','data-qa','data-cy','data-automation-id','data-help-id','name','id'];
+      const identityCounts = new Map();
+      for (const root of roots) for (const node of root.querySelectorAll('*')) for (const attribute of identityAttributes) {
+        const value = node.getAttribute(attribute);
+        if (value) { const key = attribute + String.fromCharCode(0) + value; identityCounts.set(key, (identityCounts.get(key) || 0) + 1); }
       }
       const seen = new Set();
       const collected = roots.flatMap((root) => Array.from(root.querySelectorAll(selector))).filter((el) => {
@@ -288303,8 +288343,22 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
             tableRowIndex = rows.indexOf(gridRow);
           }
         }
-        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || tableColumn || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
         const nav = el.closest('nav,[role="navigation"],[role="tree"],aside,.sapTntSideNavigation,.sapTntNavLIGroup,.sapTntNavLIItem,[class*="SideNavigation"],[class*="sideNav"]');
+        const stableIdentity = identityAttributes.map(attribute => ({ attribute, value: el.getAttribute(attribute) || '' }))
+          .find(item => item.value && identityCounts.get(item.attribute + String.fromCharCode(0) + item.value) === 1);
+        const stableLocatorExpression = stableIdentity
+          ? stableIdentity.attribute === 'data-testid'
+            ? 'getByTestId(' + JSON.stringify(stableIdentity.value) + ')'
+            : 'locator(' + JSON.stringify('[' + stableIdentity.attribute + '=' + JSON.stringify(stableIdentity.value) + ']') + ')'
+          : '';
+        const stableSelector = stableIdentity ? '[' + stableIdentity.attribute + '=' + JSON.stringify(stableIdentity.value) + ']' : '';
+        const stableName = stableIdentity?.value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ') || '';
+        const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || tableColumn || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || stableName).replace(/\\s+/g, ' ').trim();
+        const hintAttributes = ['role','type','name','placeholder','aria-label','aria-labelledby','title','data-testid','data-test','data-qa','data-cy','data-help-id','id'];
+        const domHint = '<' + tag + hintAttributes.map(attribute => {
+          const value = el.getAttribute(attribute);
+          return value ? ' ' + attribute + '=' + JSON.stringify(value) : '';
+        }).join('') + '>';
         const gridClass = typeof grid?.className === 'string' ? grid.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
         const gridSelector = grid?.id && idCounts.get(grid.id) === 1 ? '[id=' + JSON.stringify(grid.id) + ']' : grid?.matches('.sapUiTable') ? '.sapUiTable' : grid?.matches('.sapMListTbl') ? '.sapMListTbl' : grid?.matches('[role="grid"]') ? '[role="grid"]' : grid?.matches('[role="table"]') ? '[role="table"]' : 'table';
         const gridRoot = grid?.getRootNode() || grid?.ownerDocument;
@@ -288318,8 +288372,8 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
         const tableCellValue = (typeof el.value === 'string' ? el.value : nestedEditor && typeof nestedEditor.value === 'string' ? nestedEditor.value : isTableCell ? (el.innerText || el.textContent || '') : el.isContentEditable ? (el.innerText || el.textContent || '') : '').replace(/\\s+/g, ' ').trim();
         const parentTexts = [el.parentElement, el.parentElement && el.parentElement.parentElement].filter(Boolean).map((parent) => (parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean);
         const context = [...new Set([tableColumn, parentTexts[0], parentTexts[1], controlType].filter(Boolean))].join(' | ').slice(0, 180);
-        return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), searchButton, tableField: Boolean(tableColumn && (role === 'textbox' || role === 'combobox' || role === 'gridcell')), tableGridKey, tableColumnName: tableColumn, tableRowIndex, tableCellValue, tableCellExpression, context, navigation: Boolean(nav) };
-      }).filter((item) => (item.name && (item.name.length > 1 || item.navigation)) || (allowUnnamedSearch && item.role === 'searchbox') || (allowUnnamedSearch && item.searchButton && item.uniqueId));
+        return { role, name, id: el.id || undefined, uniqueId: Boolean(el.id && idCounts.get(el.id) === 1), stableLocatorExpression, stableSelector, domHint, searchButton, tableField: Boolean(tableColumn && (role === 'textbox' || role === 'combobox' || role === 'gridcell')), tableGridKey, tableColumnName: tableColumn, tableRowIndex, tableCellValue, tableCellExpression, context, navigation: Boolean(nav) };
+      }).filter((item) => (item.name && (item.name.length > 1 || item.navigation)) || item.stableLocatorExpression || (allowUnnamedSearch && item.role === 'searchbox') || (allowUnnamedSearch && item.searchButton && item.uniqueId));
       const tableMatches = wantedTableColumn
         ? collected.filter(item => item.tableField && item.tableColumnName && item.tableColumnName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().includes(wantedTableColumn))
         : [];
@@ -288347,14 +288401,14 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
   const searchboxCount = matching.filter((row) => row.role === "searchbox").length;
   return matching.flatMap((row) => {
     const duplicateName = (counts.get(`${row.role ?? ""}\0${row.name}`) ?? 0) !== 1;
-    if (duplicateName && !row.uniqueId && !(row.tableField && row.tableCellExpression)) return [];
+    if (duplicateName && !row.uniqueId && !row.stableLocatorExpression && !(row.tableField && row.tableCellExpression)) return [];
     const unnamedUniqueSearchbox = isSearchTarget(requestedTarget) && row.role === "searchbox" && !row.name && searchboxCount === 1;
-    const useObservedId = duplicateName || row.searchButton || row.tableField || isSearchTarget(requestedTarget) && row.role === "searchbox" && searchboxCount > 1 && row.id && row.uniqueId || includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35;
+    const useObservedId = !row.stableLocatorExpression && (duplicateName || row.searchButton || row.tableField || isSearchTarget(requestedTarget) && row.role === "searchbox" && searchboxCount > 1 && row.id && row.uniqueId || includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35);
     const css = row.id ? `[id=${JSON.stringify(row.id)}]` : void 0;
     const tableCellRoleLocator = row.tableField && row.tableCellExpression && !row.uniqueId && row.role ? `${row.tableCellExpression}.getByRole(${JSON.stringify(row.role)})` : void 0;
-    const expression = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `locator(${JSON.stringify(css)})` : unnamedUniqueSearchbox ? `getByRole("searchbox")` : row.role && row.role !== "generic" ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : `getByText(${JSON.stringify(row.name)}, { exact: true })`;
-    const selector = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `css=${css}` : unnamedUniqueSearchbox ? "role=searchbox" : row.role && row.role !== "generic" ? `role=${row.role}[name=${JSON.stringify(row.name)}]` : `text=${JSON.stringify(row.name)}`;
-    return [{ ref: selector, role: row.role, name: row.name, actionable: true, locatorExpression: expression, context: row.context, navigation: row.navigation, tableField: row.tableField, tableGridKey: row.tableGridKey, tableColumnName: row.tableColumnName, tableRowIndex: row.tableRowIndex, tableCellValue: row.tableCellValue, tableCellExpression: row.tableCellExpression }];
+    const expression = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `locator(${JSON.stringify(css)})` : row.stableLocatorExpression ? row.stableLocatorExpression : unnamedUniqueSearchbox ? `getByRole("searchbox")` : row.role && row.role !== "generic" ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : `getByText(${JSON.stringify(row.name)}, { exact: true })`;
+    const selector = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `css=${css}` : row.stableLocatorExpression ? `css=${row.stableSelector}` : unnamedUniqueSearchbox ? "role=searchbox" : row.role && row.role !== "generic" ? `role=${row.role}[name=${JSON.stringify(row.name)}]` : `text=${JSON.stringify(row.name)}`;
+    return [{ ref: selector, role: row.role, name: row.name, actionable: true, locatorExpression: expression, context: row.context, domHint: row.domHint, navigation: row.navigation, tableField: row.tableField, tableGridKey: row.tableGridKey, tableColumnName: row.tableColumnName, tableRowIndex: row.tableRowIndex, tableCellValue: row.tableCellValue, tableCellExpression: row.tableCellExpression }];
   });
 }
 async function inspectSapTableColumnTargets(browser, requestedColumn, signal) {
@@ -288549,12 +288603,15 @@ function parseEvaluatedDomRows(output) {
       const row = item;
       const role = typeof row.role === "string" ? row.role : void 0;
       const name = typeof row.name === "string" ? row.name.trim() : "";
-      if (!name && role !== "searchbox") return [];
+      if (!name && role !== "searchbox" && typeof row.stableLocatorExpression !== "string") return [];
       return [{
         role,
         name,
         id: typeof row.id === "string" ? row.id : void 0,
         uniqueId: row.uniqueId === true,
+        stableLocatorExpression: typeof row.stableLocatorExpression === "string" ? row.stableLocatorExpression : void 0,
+        stableSelector: typeof row.stableSelector === "string" ? row.stableSelector : void 0,
+        domHint: typeof row.domHint === "string" ? row.domHint : void 0,
         searchButton: row.searchButton === true,
         tableField: row.tableField === true,
         tableGridKey: typeof row.tableGridKey === "string" ? row.tableGridKey : void 0,
@@ -288602,6 +288659,8 @@ function parseEvaluatedFrameDomRows(output) {
         tableCellExpression: typeof row.tableCellExpression === "string" ? row.tableCellExpression : void 0,
         helpId: typeof row.helpId === "string" ? row.helpId : void 0,
         uniqueHelpId: row.uniqueHelpId === true,
+        stableLocatorExpression: typeof row.stableLocatorExpression === "string" ? row.stableLocatorExpression : void 0,
+        domHint: typeof row.domHint === "string" ? row.domHint : void 0,
         context: typeof row.context === "string" ? row.context : void 0,
         navigation: row.navigation === true,
         frameSelectors
@@ -288637,7 +288696,7 @@ function buildFrameDomTargets(rows, requestedTarget, includeSidebarCandidates) {
     const useId = Boolean(row.id && row.uniqueId && (row.searchButton || row.tableField || duplicate || isSearchTarget(requestedTarget) && row.role === "searchbox" && !row.uniqueSearchbox));
     if (duplicate && !useId && !(row.tableField && row.tableCellExpression)) return [];
     const tableCellRoleLocator = row.tableField && row.tableCellExpression && !useId && row.role ? `${row.tableCellExpression}.getByRole(${JSON.stringify(row.role)})` : void 0;
-    const leaf = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : row.helpId && row.uniqueHelpId ? `locator(${JSON.stringify(`[data-help-id=${JSON.stringify(row.helpId)}]`)})` : useId ? `locator(${JSON.stringify(`[id=${JSON.stringify(row.id)}]`)})` : row.role === "searchbox" && !row.name && row.uniqueSearchbox ? `getByRole("searchbox")` : row.role && row.name ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : void 0;
+    const leaf = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : row.stableLocatorExpression ? row.stableLocatorExpression : row.helpId && row.uniqueHelpId ? `locator(${JSON.stringify(`[data-help-id=${JSON.stringify(row.helpId)}]`)})` : useId ? `locator(${JSON.stringify(`[id=${JSON.stringify(row.id)}]`)})` : row.role === "searchbox" && !row.name && row.uniqueSearchbox ? `getByRole("searchbox")` : row.role && row.name ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : void 0;
     if (!leaf) return [];
     const expression = `${frameScope}.${leaf}`;
     return [{
@@ -288647,6 +288706,7 @@ function buildFrameDomTargets(rows, requestedTarget, includeSidebarCandidates) {
       actionable: true,
       locatorExpression: expression,
       context: row.context,
+      domHint: row.domHint,
       navigation: row.navigation,
       tableField: row.tableField,
       tableGridKey: row.tableGridKey ? `${row.frameSelectors.map((item) => `${item.selector}:${item.ordinal ?? ""}`).join(">")}|${row.tableGridKey}` : void 0,
@@ -288764,6 +288824,26 @@ function manualWaitTarget(action) {
 }
 function isLocatorAssertionStep(action) {
   return /^\s*(?:\d+[.)]\s*)?(?:validate|verify|assert|expect|check)\b/i.test(action);
+}
+function isDataExtractionStep(action) {
+  return /^\s*(?:\d+[.)]\s*)?(?:fetch|get|extract|capture|retrieve|read)\b/i.test(action) && /\b(?:store|save|assign|variable|print|log|console)\b/i.test(action);
+}
+function dataExtractionTarget(action) {
+  const cleaned = action.replace(/^\s*(?:\d+[.)]\s*)?/, "").trim();
+  const match = /^(?:fetch|get|extract|capture|retrieve|read)\s+(?:the\s+)?(.+?)(?=\s+(?:and\s+)?(?:store|save|assign|print|log|console)\b|\s+into\s+(?:a|an)\s+variable\b|$)/i.exec(cleaned);
+  return match?.[1]?.replace(/\s+/g, " ").trim() || void 0;
+}
+function rankDataExtractionElements(snapshot, target) {
+  const ignored = /* @__PURE__ */ new Set(["the", "a", "an", "and", "it", "into", "from", "created", "generated", "number", "value", "variable", "id", "no"]);
+  const terms = normalizeWords(target).split(" ").filter((word) => word.length > 2 && !ignored.has(word));
+  if (terms.length === 0) return [];
+  return snapshot.elements.map((element) => {
+    const observedName = normalizeWords(element.name ?? "");
+    const matches = terms.filter((term) => observedName.includes(term)).length;
+    const businessIdSignal = /\b\d{5,}\b/.test(element.name ?? "") || /\b[A-Z]{1,5}[- ]?\d{4,}\b/.test(element.name ?? "");
+    const semanticSignal = /status|alert|message|toast|notification|result|heading|text|generic/i.test(element.role ?? "");
+    return { element, score: matches / terms.length + (businessIdSignal ? 0.2 : 0) + (semanticSignal ? 0.05 : 0) };
+  }).filter((item) => item.element.name && item.score >= 0.45).sort((left, right) => right.score - left.score).slice(0, 6).map(({ element }) => element);
 }
 function assertionTextTerms(action) {
   const quoted = [...action.matchAll(/["']([^"']{2,})["']/g)].map((match) => match[1].trim()).filter(Boolean);
@@ -289054,7 +289134,7 @@ async function generateChangesFromProvider(options) {
   } : void 0;
   const targetSpecPath = manualCases.length > 1 ? `tests/${scenarioStem}.spec.ts` : existingTestPath ?? `tests/${stem}.spec.ts`;
   const browserEvidence = [
-    ...selectRelevantBrowserCandidates(options.task.browserLocatorCandidates ?? []).map((candidate) => `Observed for step ${candidate.stepOrder ?? "unspecified"} on ${candidate.pageUrl ?? "an inspected screen"} via ${candidate.backend} at ${candidate.observedAt}: ref=${candidate.ref}, role=${candidate.role ?? "unknown"}, name=${candidate.name ?? "unnamed"}, locator=${candidate.expression}`),
+    ...selectRelevantBrowserCandidates(options.task.browserLocatorCandidates ?? []).map((candidate) => `Observed for step ${candidate.stepOrder ?? "unspecified"} on ${candidate.pageUrl ?? "an inspected screen"} via ${candidate.backend} at ${candidate.observedAt}: ref=${candidate.ref}, role=${candidate.role ?? "unknown"}, name=${candidate.name ?? "unnamed"}, locator=${candidate.expression}${candidate.domHint ? `, DOM=${candidate.domHint}` : ""}`),
     ...options.plan.flatMap((entry) => entry.verifiedLocator ? [`Selected for step ${entry.stepOrder} (${entry.stepAction}): ${entry.verifiedLocator.expression} via ${entry.verifiedLocator.backend}, ref=${entry.verifiedLocator.ref}`] : [])
   ].join("\n");
   const frameworkExamples = renderFrameworkExamples(options.analysis);
@@ -289120,7 +289200,7 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
         manualTestData,
         browserEvidence,
         frameworkExamples: frameworkExamples.text
-      }) + renderScreenArchitectureRequirements(manualCases, options.task.browserLocatorCandidates ?? [])
+      }) + renderDataExtractionRequirements(manualCases) + renderScreenArchitectureRequirements(manualCases, options.task.browserLocatorCandidates ?? [])
     }
   ];
   const modelId = options.config?.model ?? model?.id;
@@ -289155,7 +289235,14 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
     ...findAssertionLocatorIssues(changes2, manualCases, options.task.browserLocatorCandidates ?? []),
     ...findManualNavigationIssues(changes2, manualCases),
     ...findManualStepCoverageIssues(changes2, manualCases),
-    ...findScreenPageArchitectureIssues(changes2, manualCases, options.repositoryRoot)
+    ...findDataExtractionIssues(changes2, manualCases),
+    ...findScreenPageArchitectureIssues(changes2, manualCases, options.repositoryRoot),
+    ...findObservedLocatorCoverageIssues(
+      changes2,
+      manualCases,
+      options.task.browserLocatorCandidates ?? [],
+      facts.locators.map((locator) => locator.expression)
+    )
   ];
   const normalizeGeneratedChanges = (changes2) => {
     const withObservedFrames = rewriteObservedFrameLocators(rewriteDirectPageActions(
@@ -289431,6 +289518,27 @@ function findScreenPageArchitectureIssues(changes, cases, repositoryRoot) {
   }
   if (generatedPageFolders.size < 2) {
     issues.push("This flow crosses screens, but its page classes are not separated into screen-specific folders. Use one pages/<ScreenName>/ folder per screen.");
+  }
+  return issues;
+}
+function findObservedLocatorCoverageIssues(changes, cases, candidates, indexedExpressions) {
+  const generatedLocatorExpressions = new Set(changes.filter((change) => /(^|\/)pages\/.+(?:\.locators|Locators)\.tsx?$/i.test(`/${change.path.replace(/\\/g, "/")}`)).flatMap((change) => extractLocatorExpressions(change.newContent ?? "")).map(normalizeLocatorExpression));
+  const indexed = new Set(indexedExpressions.map(normalizeLocatorExpression));
+  const testSteps = new Map(cases.flatMap((testCase) => testCase.steps.map((step) => [step.order, step.action])));
+  const issues = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const candidate of candidates) {
+    if (candidate.stepOrder === void 0) continue;
+    const stepAction = testSteps.get(candidate.stepOrder);
+    if (!stepAction || isLocatorAssertionStep(stepAction)) continue;
+    const expression = extractLocatorExpressions(candidate.expression)[0];
+    if (!expression) continue;
+    const normalized = normalizeLocatorExpression(expression);
+    const key = `${candidate.stepOrder}\0${normalized}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (generatedLocatorExpressions.has(normalized) || indexed.has(normalized)) continue;
+    issues.push(`The observed locator for manual step ${candidate.stepOrder} ('${stepAction}') is missing from the generated locator classes. Add this exact DOM or snapshot locator, or reuse the matching indexed locator: ${expression}`);
   }
   return issues;
 }
@@ -289768,6 +289876,54 @@ function findManualStepCoverageIssues(changes, testCases) {
     }
   }
   return [...new Set(issues)];
+}
+function findDataExtractionIssues(changes, testCases) {
+  const specs = changes.filter((change) => /(^|\/)tests\/[^/]+\.spec\.tsx?$/.test(`/${change.path.replace(/\\/g, "/")}`));
+  const pageSources = changes.filter((change) => /^pages\/.+\.page\.tsx?$/i.test(change.path.replace(/\\/g, "/"))).map((change) => change.newContent ?? "");
+  const combinedPages = pageSources.join("\n");
+  const issues = [];
+  for (const testCase of testCases) {
+    for (const step of testCase.steps.filter((item) => isDataExtractionStep(item.action))) {
+      const bodies = specs.flatMap((spec) => {
+        const body2 = extractNamedTestBody(spec.newContent ?? "", testCase.title);
+        return body2 === void 0 ? [] : [body2];
+      });
+      if (bodies.length !== 1) continue;
+      const body = bodies[0];
+      const assignment = /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\s*\(/.exec(body);
+      if (!assignment) {
+        issues.push(`Manual step ${step.order} requests data extraction ('${step.action}'). Store the extracted UI value in a named local variable using an awaited page-object method.`);
+        continue;
+      }
+      const variable = assignment[1];
+      if (!new RegExp(`\\bconsole\\s*\\.\\s*log\\s*\\([\\s\\S]*?\\b${escapeRegExp(variable)}\\b`).test(body)) {
+        issues.push(`Manual step ${step.order} requests printing the extracted value. Add console.log(...) for the local variable '${variable}' in the test block.`);
+      }
+      const method = assignment[3];
+      const methodDeclaration = new RegExp(`\\basync\\s+${escapeRegExp(method)}\\s*\\([^)]*\\)[^{]*\\{`).exec(combinedPages);
+      const methodBody = methodDeclaration?.index === void 0 ? "" : (() => {
+        const openBrace = methodDeclaration.index + methodDeclaration[0].lastIndexOf("{");
+        const closeBrace = findMatchingBrace(combinedPages, openBrace);
+        return closeBrace >= 0 ? combinedPages.slice(openBrace + 1, closeBrace) : "";
+      })();
+      if (!methodBody.includes("this.actions.getText(")) {
+        issues.push(`Page method '${method}' for extraction step ${step.order} must read the visible result through this.actions.getText(this.locators...).`);
+      }
+    }
+  }
+  return [...new Set(issues)];
+}
+function renderDataExtractionRequirements(testCases) {
+  const extractionSteps = testCases.flatMap((testCase) => testCase.steps.filter((step) => isDataExtractionStep(step.action)).map((step) => `- ${testCase.title}, step ${step.order}: ${step.action}`));
+  if (extractionSteps.length === 0) return "";
+  return `
+
+## Data extraction and output requirements
+
+Implement each extraction step as executable code. Use the step-scoped browser evidence for the visible result; create/reuse a verified locator in the screen's locator class, read it through the page object's framework facade with this.actions.getText(this.locators.<FIELD>), and return the extracted value from a page-object method. In the spec, assign the awaited return value to a clearly named const and print that same variable with console.log. If the observed UI text contains a label plus a changing identifier, parse the identifier from the observed result format without hardcoding the sample value. Do not log credentials or unrelated page text. If no result locator was observed, do not invent one; report the missing evidence.
+
+Steps requiring extraction:
+${extractionSteps.join("\n")}`;
 }
 function extractNamedTestBody(source, title) {
   const pattern = new RegExp(`\\btest\\s*\\(\\s*(['"\`])${escapeRegExp(title)}\\1\\s*,[\\s\\S]*?=>\\s*\\{`);

@@ -287627,12 +287627,13 @@ async function gatherEvidenceForTestCase(browser, options) {
         const tableColumnTarget = action.kind === "fill" ? normalizeTableColumnTarget(action.target) : "";
         if (tableColumnTarget) options.onStatus?.(`Locating the empty ${tableColumnTarget} cell in the current SAP table.`);
         const directTableTargets = tableColumnTarget ? await inspectSapTableColumnTargets(browser, tableColumnTarget, options.signal) : [];
-        if (tableColumnTarget) options.onStatus?.(directTableTargets.length > 0 ? `Found ${directTableTargets.length} observed ${tableColumnTarget} table cell candidate(s).` : `The Playwright CLI did not expose a matching ${tableColumnTarget} table cell; checking the current page snapshot.`);
-        const domElements = tableColumnTarget ? directTableTargets : await inspectVisibleDomTargets(
+        if (tableColumnTarget) options.onStatus?.(directTableTargets.length > 0 ? `Found ${directTableTargets.length} observed ${tableColumnTarget} table cell candidate(s).` : `The Playwright CLI table scan found no ${tableColumnTarget} cell; checking live DOM and snapshot evidence.`);
+        const domElements = tableColumnTarget && directTableTargets.length > 0 ? directTableTargets : await inspectVisibleDomTargets(
           browser,
           action.target,
           options.signal,
-          isSidebarNavigationStep(step.action)
+          isSidebarNavigationStep(step.action),
+          bestSnapshotScore < 0.75 || Boolean(tableColumnTarget && directTableTargets.length === 0)
         );
         const observedDomElements = [...directTableTargets, ...domElements];
         if (domElements.length > 0) {
@@ -287819,12 +287820,16 @@ async function gatherEvidenceForTestCase(browser, options) {
           if (action.kind === "fill" && snapshotTableSelection) {
             recordSnapshotTableFill(snapshotTableSelection, snapshotTableRowCursors);
           }
+          const equivalentDomTargets = observedDomElements.filter(
+            (element) => element.locatorExpression && element.role === target.role && normalizeWords(element.name ?? "") === normalizeWords(target.name ?? "")
+          );
+          const locatorTargets = equivalentDomTargets.length === 1 ? equivalentDomTargets : [target];
           locatorCandidates.push(...await candidatesForStep(
             preActionSnapshot,
             step.order,
             step.action,
             currentUrl,
-            [target]
+            locatorTargets
           ));
         }
         const clickTriggeredNavigationWaitTimeout = action.kind === "click" && !result.ok && isClickNavigationWaitTimeout(result.error);
@@ -288033,7 +288038,7 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
     return void 0;
   }
   async function candidatesForStep(observed, stepOrder, stepAction, pageUrl, elements = observed.elements.filter((item) => item.actionable !== false).slice(0, 20)) {
-    if (!(browser.capabilities?.canGenerateLocator ?? false)) return [];
+    const canGenerateLocator = browser.capabilities?.canGenerateLocator ?? false;
     const candidates = [];
     for (const element of elements) {
       if (options.signal?.aborted) throw new Error("Browser locator discovery was cancelled.");
@@ -288052,6 +288057,7 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
         });
         continue;
       }
+      if (!canGenerateLocator) continue;
       const generated = await browser.generateLocator(element.ref, { signal: options.signal });
       const expression = generated.output?.trim();
       if (!generated.ok || !expression || !/^(?:(?:this\.)?page\.)?(?:frameLocator|getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\(/.test(expression)) continue;
@@ -288072,14 +288078,18 @@ ${elements.length > 0 ? elements.join("\n") : `Snapshot contains ${observed.elem
     return candidates;
   }
 }
-async function inspectVisibleDomTargets(browser, requestedTarget, signal, includeSidebarCandidates = false) {
+async function inspectVisibleDomTargets(browser, requestedTarget, signal, includeSidebarCandidates = false, includeRawHtml = false) {
   const tableColumnTarget = normalizeTableColumnTarget(requestedTarget);
   const tableOnlySelector = 'input,textarea,select,[contenteditable="true"],[role="textbox"],[role="combobox"],[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell';
   const broadSelector = 'input,textarea,select,[contenteditable="true"],a,button,[role="link"],[role="button"],[role="searchbox"],[role="textbox"],[role="combobox"],[role="gridcell"],[role="cell"],td,.sapUiTableCell,.sapMListTblCell,[role="menuitem"],[role="treeitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex],ui5-button,ui5-input,ui5-search,.sapMLnk,.sapMBtn,.sapTntNavLIItem,.sapMITBFilter,.sapMSFI,.sapMSFF,.sapMSF,.sapMSearchField';
   const domSelector = tableColumnTarget ? tableOnlySelector : broadSelector;
+  const rawTargetWords = normalizeWords(requestedTarget).split(" ").filter((word) => word.length > 1);
+  let frameTargets = [];
   const frameInspection = await browser.runCode(`async page => {
     const selector = ${JSON.stringify(domSelector)};
     const wantedTableColumn = ${JSON.stringify(tableColumnTarget)};
+    const includeRawHtml = ${JSON.stringify(includeRawHtml)};
+    const rawTargetWords = ${JSON.stringify(rawTargetWords)};
     const results = [];
     const frames = page.frames();
     for (const frame of frames.slice(1, 41)) {
@@ -288119,6 +288129,18 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           for (const node of roots[i].querySelectorAll('*')) if (node.shadowRoot) roots.push(node.shadowRoot);
         }
         const nodes = roots.flatMap(root => Array.from(root.querySelectorAll(selector)));
+        if (includeRawHtml && !wantedTableColumn && rawTargetWords.length > 0) {
+          const rawMatches = roots.flatMap(root => Array.from(root.querySelectorAll('*')).filter(el => {
+            const rect = el.getBoundingClientRect(); const style = getComputedStyle(el);
+            if (rect.width <= 0 || rect.height <= 0 || style.visibility === 'hidden' || style.display === 'none' || el.getAttribute('aria-hidden') === 'true') return false;
+            const clickable = el.matches('button,a,[role="button"],[role="link"],[tabindex],.sapMBtn,.sapMLnk,.sapTntNavLIItem') || style.cursor === 'pointer' || el.matches('input,textarea,select,[contenteditable="true"]');
+            if (!clickable) return false;
+            const haystack = [el.innerText,el.textContent,...Array.from(el.attributes || []).map(attribute => attribute.name + ' ' + attribute.value),el.outerHTML].filter(Boolean).join(' ').toLowerCase().replace(/[^a-z0-9]+/g,' ');
+            const matches = rawTargetWords.filter(word => haystack.includes(word)).length;
+            return matches >= Math.max(1, Math.ceil(rawTargetWords.length * 0.6));
+          }).map(el => el.closest('button,a,[role="button"],[role="link"],[tabindex],.sapMBtn,.sapMLnk,.sapTntNavLIItem') || el));
+          nodes.push(...rawMatches);
+        }
         const idCounts = new Map();
         for (const root of roots) for (const node of root.querySelectorAll('[id]')) idCounts.set(node.id, (idCounts.get(node.id) || 0) + 1);
         const helpIdCounts = new Map();
@@ -288214,10 +288236,28 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
           const stableName = stableIdentity?.value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ') || '';
           const name = (el.getAttribute('aria-label') || labels || el.getAttribute('placeholder') || associated || el.getAttribute('title') || ui5Name || tableColumn || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || stableName).replace(/\\s+/g, ' ').trim();
           const hintAttributes = ['role','type','name','placeholder','aria-label','aria-labelledby','title','data-testid','data-test','data-qa','data-cy','data-help-id','id'];
-          const domHint = '<' + tag + hintAttributes.map(attribute => {
+          const attributeHint = '<' + tag + hintAttributes.map(attribute => {
             const value = el.getAttribute(attribute);
             return value ? ' ' + attribute + '=' + JSON.stringify(value) : '';
           }).join('') + '>';
+          let rawHtml = '';
+          if (includeRawHtml) {
+            try {
+              const clone = el.cloneNode(true);
+              const scrub = node => {
+                if (node.nodeType === 3) { node.nodeValue = ''; return; }
+                if (node.nodeType !== 1) return;
+                for (const attribute of Array.from(node.attributes || [])) {
+                  if (attribute.name === 'value' || /password|secret|token|authorization|cookie/i.test(attribute.name)) node.removeAttribute(attribute.name);
+                }
+                if (/^(?:script|style|textarea)$/i.test(node.tagName)) { node.remove(); return; }
+                for (const child of Array.from(node.childNodes || [])) scrub(child);
+              };
+              scrub(clone);
+              rawHtml = String(clone.outerHTML || '').slice(0, 500);
+            } catch {}
+          }
+          const domHint = attributeHint + (rawHtml ? ' rawHTML=' + JSON.stringify(rawHtml) : '');
           const gridClass = typeof grid?.className === 'string' ? grid.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
           const gridSelector = grid?.id && idCounts.get(grid.id) === 1 ? '[id=' + JSON.stringify(grid.id) + ']' : grid?.matches('.sapUiTable') ? '.sapUiTable' : grid?.matches('.sapMListTbl') ? '.sapMListTbl' : grid?.matches('[role="grid"]') ? '[role="grid"]' : grid?.matches('[role="table"]') ? '[role="table"]' : 'table';
           const gridRoot = grid?.getRootNode() || grid?.ownerDocument;
@@ -288249,14 +288289,15 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
   }`, { signal, timeoutMs: 12e3 });
   if (frameInspection.ok && frameInspection.output) {
     const rows2 = parseEvaluatedFrameDomRows(frameInspection.output);
-    const frameTargets = buildFrameDomTargets(rows2, requestedTarget, includeSidebarCandidates);
-    if (frameTargets.length > 0) return frameTargets;
+    frameTargets = buildFrameDomTargets(rows2, requestedTarget, includeSidebarCandidates);
   }
   const inspected = await browser.execute(
     (tool, callOptions) => tool.eval(`() => {
       const selector = ${JSON.stringify(domSelector)};
       const wantedTableColumn = ${JSON.stringify(tableColumnTarget)};
       const allowUnnamedSearch = ${isSearchTarget(requestedTarget)};
+      const includeRawHtml = ${JSON.stringify(includeRawHtml)};
+      const rawTargetWords = ${JSON.stringify(rawTargetWords)};
       const roots = [document];
       for (let index = 0; index < roots.length && index < 40; index++) {
         for (const node of roots[index].querySelectorAll('*')) {
@@ -288274,7 +288315,20 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
         if (value) { const key = attribute + String.fromCharCode(0) + value; identityCounts.set(key, (identityCounts.get(key) || 0) + 1); }
       }
       const seen = new Set();
-      const collected = roots.flatMap((root) => Array.from(root.querySelectorAll(selector))).filter((el) => {
+      const selectorNodes = roots.flatMap((root) => Array.from(root.querySelectorAll(selector)));
+      if (includeRawHtml && !wantedTableColumn && rawTargetWords.length > 0) {
+        const rawMatches = roots.flatMap((root) => Array.from(root.querySelectorAll('*')).filter((el) => {
+          const rect = el.getBoundingClientRect(); const style = getComputedStyle(el);
+          if (rect.width <= 0 || rect.height <= 0 || style.visibility === 'hidden' || style.display === 'none' || el.getAttribute('aria-hidden') === 'true') return false;
+          const clickable = el.matches('button,a,[role="button"],[role="link"],[tabindex],.sapMBtn,.sapMLnk,.sapTntNavLIItem') || style.cursor === 'pointer' || el.matches('input,textarea,select,[contenteditable="true"]');
+          if (!clickable) return false;
+          const haystack = [el.innerText,el.textContent,...Array.from(el.attributes || []).map((attribute) => attribute.name + ' ' + attribute.value),el.outerHTML].filter(Boolean).join(' ').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+          const matches = rawTargetWords.filter((word) => haystack.includes(word)).length;
+          return matches >= Math.max(1, Math.ceil(rawTargetWords.length * 0.6));
+        }).map((el) => el.closest('button,a,[role="button"],[role="link"],[tabindex],.sapMBtn,.sapMLnk,.sapTntNavLIItem') || el));
+        selectorNodes.push(...rawMatches);
+      }
+      const collected = selectorNodes.filter((el) => {
         if (seen.has(el)) return false;
         seen.add(el);
         const rect = el.getBoundingClientRect();
@@ -288355,10 +288409,28 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
         const stableName = stableIdentity?.value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ') || '';
         const name = (el.getAttribute('aria-label') || labelledBy || el.getAttribute('placeholder') || associatedLabels || el.getAttribute('title') || ui5Labels[0] || tableColumn || (searchButton || searchField ? 'Search' : '') || el.innerText || el.textContent || stableName).replace(/\\s+/g, ' ').trim();
         const hintAttributes = ['role','type','name','placeholder','aria-label','aria-labelledby','title','data-testid','data-test','data-qa','data-cy','data-help-id','id'];
-        const domHint = '<' + tag + hintAttributes.map(attribute => {
+        const attributeHint = '<' + tag + hintAttributes.map(attribute => {
           const value = el.getAttribute(attribute);
           return value ? ' ' + attribute + '=' + JSON.stringify(value) : '';
         }).join('') + '>';
+        let rawHtml = '';
+        if (includeRawHtml) {
+          try {
+            const clone = el.cloneNode(true);
+            const scrub = node => {
+              if (node.nodeType === 3) { node.nodeValue = ''; return; }
+              if (node.nodeType !== 1) return;
+              for (const attribute of Array.from(node.attributes || [])) {
+                if (attribute.name === 'value' || /password|secret|token|authorization|cookie/i.test(attribute.name)) node.removeAttribute(attribute.name);
+              }
+              if (/^(?:script|style|textarea)$/i.test(node.tagName)) { node.remove(); return; }
+              for (const child of Array.from(node.childNodes || [])) scrub(child);
+            };
+            scrub(clone);
+            rawHtml = String(clone.outerHTML || '').slice(0, 500);
+          } catch {}
+        }
+        const domHint = attributeHint + (rawHtml ? ' rawHTML=' + JSON.stringify(rawHtml) : '');
         const gridClass = typeof grid?.className === 'string' ? grid.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
         const gridSelector = grid?.id && idCounts.get(grid.id) === 1 ? '[id=' + JSON.stringify(grid.id) + ']' : grid?.matches('.sapUiTable') ? '.sapUiTable' : grid?.matches('.sapMListTbl') ? '.sapMListTbl' : grid?.matches('[role="grid"]') ? '[role="grid"]' : grid?.matches('[role="table"]') ? '[role="table"]' : 'table';
         const gridRoot = grid?.getRootNode() || grid?.ownerDocument;
@@ -288381,18 +288453,38 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
     }`, void 0, callOptions),
     { signal }
   );
-  if (!inspected.ok || !inspected.output) return [];
+  if (!inspected.ok || !inspected.output) return frameTargets;
   const rows = parseEvaluatedDomRows(inspected.output);
   const wanted = normalizeWords(requestedTarget);
   const wantedTableColumn = normalizeTableColumnTarget(requestedTarget);
-  const matching = rows.map((row) => ({
+  const frameRows = frameTargets.map((element) => ({
+    role: element.role,
+    name: element.name ?? "",
+    ref: element.ref,
+    locatorExpression: element.locatorExpression,
+    id: void 0,
+    uniqueId: false,
+    stableLocatorExpression: element.locatorExpression,
+    stableSelector: void 0,
+    domHint: element.domHint,
+    searchButton: element.role === "searchbox",
+    tableField: element.tableField,
+    tableGridKey: element.tableGridKey,
+    tableColumnName: element.tableColumnName,
+    tableRowIndex: element.tableRowIndex,
+    tableCellValue: element.tableCellValue,
+    tableCellExpression: element.tableCellExpression,
+    context: element.context,
+    navigation: element.navigation
+  }));
+  const matching = [...frameRows, ...rows].map((row) => ({
     ...row,
     score: isSearchTarget(requestedTarget) && row.role === "searchbox" && !row.name ? 0.9 : Math.max(
       textMatchScore(normalizeWords(row.name), wanted),
       wantedTableColumn ? textMatchScore(normalizeWords(row.tableColumnName ?? ""), wantedTableColumn) : 0,
       textMatchScore(normalizeWords(row.context ?? ""), wanted) * 0.85
     )
-  })).filter((row) => row.score >= 0.35 || includeSidebarCandidates && row.navigation && row.id && row.uniqueId || isSearchTarget(requestedTarget) && row.role === "searchbox").sort((a, b) => b.score - a.score || Number(b.navigation) - Number(a.navigation)).slice(0, includeSidebarCandidates ? 24 : 20);
+  })).filter((row) => row.score >= 0.35 || includeSidebarCandidates && row.navigation && row.id && row.uniqueId || isSearchTarget(requestedTarget) && row.role === "searchbox").sort((a, b) => b.score - a.score || Number(b.navigation) - Number(a.navigation)).slice(0, includeRawHtml ? 8 : includeSidebarCandidates ? 24 : 20);
   const counts = /* @__PURE__ */ new Map();
   for (const row of matching) {
     const key = `${row.role ?? ""}\0${row.name}`;
@@ -288406,8 +288498,8 @@ async function inspectVisibleDomTargets(browser, requestedTarget, signal, includ
     const useObservedId = !row.stableLocatorExpression && (duplicateName || row.searchButton || row.tableField || isSearchTarget(requestedTarget) && row.role === "searchbox" && searchboxCount > 1 && row.id && row.uniqueId || includeSidebarCandidates && row.navigation && row.id && row.uniqueId && row.score < 0.35);
     const css = row.id ? `[id=${JSON.stringify(row.id)}]` : void 0;
     const tableCellRoleLocator = row.tableField && row.tableCellExpression && !row.uniqueId && row.role ? `${row.tableCellExpression}.getByRole(${JSON.stringify(row.role)})` : void 0;
-    const expression = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `locator(${JSON.stringify(css)})` : row.stableLocatorExpression ? row.stableLocatorExpression : unnamedUniqueSearchbox ? `getByRole("searchbox")` : row.role && row.role !== "generic" ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : `getByText(${JSON.stringify(row.name)}, { exact: true })`;
-    const selector = row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `css=${css}` : row.stableLocatorExpression ? `css=${row.stableSelector}` : unnamedUniqueSearchbox ? "role=searchbox" : row.role && row.role !== "generic" ? `role=${row.role}[name=${JSON.stringify(row.name)}]` : `text=${JSON.stringify(row.name)}`;
+    const expression = row.locatorExpression ?? (row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `locator(${JSON.stringify(css)})` : row.stableLocatorExpression ? row.stableLocatorExpression : unnamedUniqueSearchbox ? `getByRole("searchbox")` : row.role && row.role !== "generic" ? `getByRole(${JSON.stringify(row.role)}, { name: ${JSON.stringify(row.name)}, exact: true })` : `getByText(${JSON.stringify(row.name)}, { exact: true })`);
+    const selector = row.ref ?? (row.role === "gridcell" && row.tableCellExpression ? row.tableCellExpression : tableCellRoleLocator ? tableCellRoleLocator : useObservedId && css ? `css=${css}` : row.stableLocatorExpression ? `css=${row.stableSelector}` : unnamedUniqueSearchbox ? "role=searchbox" : row.role && row.role !== "generic" ? `role=${row.role}[name=${JSON.stringify(row.name)}]` : `text=${JSON.stringify(row.name)}`);
     return [{ ref: selector, role: row.role, name: row.name, actionable: true, locatorExpression: expression, context: row.context, domHint: row.domHint, navigation: row.navigation, tableField: row.tableField, tableGridKey: row.tableGridKey, tableColumnName: row.tableColumnName, tableRowIndex: row.tableRowIndex, tableCellValue: row.tableCellValue, tableCellExpression: row.tableCellExpression }];
   });
 }
@@ -288607,6 +288699,8 @@ function parseEvaluatedDomRows(output) {
       return [{
         role,
         name,
+        ref: typeof row.ref === "string" ? row.ref : void 0,
+        locatorExpression: typeof row.locatorExpression === "string" ? row.locatorExpression : void 0,
         id: typeof row.id === "string" ? row.id : void 0,
         uniqueId: row.uniqueId === true,
         stableLocatorExpression: typeof row.stableLocatorExpression === "string" ? row.stableLocatorExpression : void 0,
@@ -289200,7 +289294,7 @@ ${testCase.steps.map((step) => `${step.order}. ${step.action}${step.expectedResu
         manualTestData,
         browserEvidence,
         frameworkExamples: frameworkExamples.text
-      }) + renderDataExtractionRequirements(manualCases) + renderScreenArchitectureRequirements(manualCases, options.task.browserLocatorCandidates ?? [])
+      }) + renderObservedDomLocatorRequirements(options.task.browserLocatorCandidates ?? []) + renderDataExtractionRequirements(manualCases) + renderScreenArchitectureRequirements(manualCases, options.task.browserLocatorCandidates ?? [])
     }
   ];
   const modelId = options.config?.model ?? model?.id;
@@ -289537,10 +289631,60 @@ function findObservedLocatorCoverageIssues(changes, cases, candidates, indexedEx
     const key = `${candidate.stepOrder}\0${normalized}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    if (generatedLocatorExpressions.has(normalized) || indexed.has(normalized)) continue;
+    const isRepresented = [...generatedLocatorExpressions, ...indexed].some(
+      (known) => normalized === known || equivalentVerifiedLocators(expression, known)
+    );
+    if (isRepresented) continue;
     issues.push(`The observed locator for manual step ${candidate.stepOrder} ('${stepAction}') is missing from the generated locator classes. Add this exact DOM or snapshot locator, or reuse the matching indexed locator: ${expression}`);
   }
   return issues;
+}
+function equivalentVerifiedLocators(observedExpression, existingExpression) {
+  const observed = locatorCallDetails(observedExpression);
+  const existing = locatorCallDetails(existingExpression);
+  if (!observed || !existing) return false;
+  const lastCallStart = (expression) => {
+    const calls = [...expression.matchAll(/(?:^|\.)(frameLocator|getByRole|getByLabel|getByText|getByPlaceholder|getByTestId|locator)\s*\(/g)];
+    const call = calls.at(-1);
+    return call?.index === void 0 ? 0 : call.index + (call[0].startsWith(".") ? 1 : 0);
+  };
+  const observedScope = normalizeLocatorExpression(observedExpression.slice(0, lastCallStart(observedExpression)));
+  const existingScope = normalizeLocatorExpression(existingExpression.slice(0, lastCallStart(existingExpression)));
+  if (observedScope !== existingScope) return false;
+  const roleName = (args) => {
+    const roleLiteral = /^\s*((?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))\s*,/.exec(args)?.[1];
+    const nameLiteral = /\bname\s*:\s*((?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))/.exec(args)?.[1];
+    const role = roleLiteral ? decodeLocatorString(roleLiteral) : void 0;
+    const name = nameLiteral ? decodeLocatorString(nameLiteral) : void 0;
+    return role && name ? { role, name } : void 0;
+  };
+  const stringArgument = (args) => {
+    const literal = /^\s*((?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))/.exec(args)?.[1];
+    return literal ? decodeLocatorString(literal) : void 0;
+  };
+  const observedAccessible = observed.method === "getByRole" ? roleName(observed.args) : void 0;
+  if (observedAccessible?.role.toLowerCase() === "textbox" && observedAccessible.name) {
+    return ["getByPlaceholder", "getByLabel"].some(
+      (method) => existing.method === method && stringArgument(existing.args) === observedAccessible.name
+    );
+  }
+  const existingAccessible = existing.method === "getByRole" ? roleName(existing.args) : void 0;
+  if (existingAccessible?.role.toLowerCase() === "textbox" && existingAccessible.name) {
+    return ["getByPlaceholder", "getByLabel"].some(
+      (method) => observed.method === method && stringArgument(observed.args) === existingAccessible.name
+    );
+  }
+  return false;
+}
+function decodeLocatorString(literal) {
+  if (literal.startsWith('"')) {
+    try {
+      return JSON.parse(literal);
+    } catch {
+      return void 0;
+    }
+  }
+  return literal.slice(1, -1).replace(/\\(['"\\])/g, "$1").replace(/\\n/g, "\n").replace(/\\r/g, "\r");
 }
 function caseDataKey(title) {
   return title.replace(/[^a-zA-Z0-9]+/g, " ").trim().split(/\s+/).slice(0, 6).map((word, index) => index === 0 ? word.charAt(0).toLowerCase() + word.slice(1) : word.charAt(0).toUpperCase() + word.slice(1)).join("") || "manualCase";
@@ -289924,6 +290068,16 @@ Implement each extraction step as executable code. Use the step-scoped browser e
 
 Steps requiring extraction:
 ${extractionSteps.join("\n")}`;
+}
+function renderObservedDomLocatorRequirements(candidates) {
+  const observed = candidates.filter((candidate) => candidate.domHint && candidate.stepOrder !== void 0);
+  if (observed.length === 0) return "";
+  return `
+
+## Live DOM and raw HTML locator evidence
+
+The following locators were derived from the currently rendered DOM when snapshot evidence was incomplete. Any rawHTML fragment is a sanitized, bounded fragment of the matching live element, with text nodes and input values removed. Use it to confirm the element's tag, role, attributes, and nesting; preserve the verified locator for that manual step in the screen's locator class, or reuse a locator with the same target and frame scope. Do not omit these locators because the action already succeeded during planning:
+${observed.map((candidate) => `- Manual step ${candidate.stepOrder}: ${candidate.expression} | ${candidate.domHint}`).join("\n")}`;
 }
 function extractNamedTestBody(source, title) {
   const pattern = new RegExp(`\\btest\\s*\\(\\s*(['"\`])${escapeRegExp(title)}\\1\\s*,[\\s\\S]*?=>\\s*\\{`);
